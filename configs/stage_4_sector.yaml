@@ -1,0 +1,54 @@
+# Stage 4 — Sector-group attention
+# Run 3 sub-variants (oil_gas, metals, financials) by swapping `tickers` + `stage_id`.
+# Interval/context_len here mirror the best (interval, ctx) found in stages 1-3.
+stage_id: stage_4a_oilgas
+notes: >
+  Test whether intra-sector group attention beats mixed-sector grouping for the
+  same tickers. Compare per-ticker DA against the matching entries in the
+  stage 1/2/3 best sub-run.
+
+interval: 24                  # set to the winning interval from stages 1-3
+date_from: "2021-01-01"
+date_till: "2026-04-30"
+
+# Swap this block for metals / financials in the other sub-variants:
+tickers:                      # oil/gas/exporters
+  - GAZP
+  - LKOH
+  - ROSN
+  - NVTK
+  - TATN
+  - SNGS
+  - SNGSP
+# tickers (metals):           # for stage_4b_metals
+#   - GMKN
+#   - PLZL
+#   - MAGN
+#   - NLMK
+#   - CHMF
+#   - ALRS
+# tickers (financials):       # for stage_4c_financials
+#   - SBER
+#   - VTBR
+#   - MOEX
+#   - BSPB
+#   - CBOM
+
+indexes:        [IMOEX, MOEXOG, MOEXMM, MOEXFN, RGBI]
+futures_proxies: [BR, Si, GD]
+
+context_len: 250              # mirror best ctx from stage 1
+horizon: 5
+quantiles: [0.1, 0.5, 0.9]
+
+walk_forward:
+  shift: 1
+  max_windows: 400
+
+covariates: full
+
+eval_horizons:    [1, 2, 3, 5]
+primary_horizons: [2, 3, 5]
+baselines: [zero, last, momentum5, ar1]
+
+output_dir: runs

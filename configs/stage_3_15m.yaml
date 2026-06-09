@@ -1,0 +1,43 @@
+# Stage 3 — 15-minute interval, full study
+# Sub-variants by context_len: 3a=500, 3b=1000, 3c=1500
+stage_id: stage_3b_15m_ctx1000
+notes: >
+  15-min bars, core 12 (drop any ticker with >5% missing bars at load time).
+  Tests the "first 2-3 bars predictive" observation from the smoke run.
+
+interval: 15
+date_from: "2024-05-01"
+date_till: "2026-04-30"
+
+tickers:
+  - SBER
+  - GAZP
+  - LKOH
+  - ROSN
+  - NVTK
+  - TATN
+  - GMKN
+  - PLZL
+  - MAGN
+  - NLMK
+  - MOEX
+  - VTBR
+
+indexes:        [IMOEX, MOEXOG, MOEXMM, MOEXFN]
+futures_proxies: [BR, Si, GD]   # 15m FORTS unavailable; resolver ffills 60m onto 15m grid
+
+context_len: 1000          # also run with 500, 1500
+horizon: 5
+quantiles: [0.1, 0.5, 0.9]
+
+walk_forward:
+  shift: 4
+  max_windows: 500
+
+covariates: full
+
+eval_horizons:    [1, 2, 3, 5]
+primary_horizons: [2, 3, 5]
+baselines: [zero, last, momentum5, ar1]
+
+output_dir: runs

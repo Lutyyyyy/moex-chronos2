@@ -1,0 +1,39 @@
+# --- Excluded sub-workspaces / unrelated subprojects ---
+.claude/
+.obsidian/
+Clippings/
+tunnels/
+team_repo/
+etolb/
+repo_res/
+
+# --- Large / binary data ---
+*.parquet
+*.pdf
+
+# --- Pasted Obsidian images ---
+Pasted image*
+
+# --- Files not part of the Chronos experiment ---
+ArenaGo test.md
+m_arenago.txt
+misha-gitlab-mhack.txt
+sec.json
+ass.json
+engines.json
+chat.md
+
+# --- Python artifacts ---
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+*.egg-info/
+
+# --- Jupyter checkpoints ---
+.ipynb_checkpoints/
+
+# --- OS ---
+.DS_Store
+Thumbs.db
+gp.md

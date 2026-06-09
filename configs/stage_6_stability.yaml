@@ -1,0 +1,45 @@
+# Stage 6 — Time-window stability across regimes
+# Run multiple sub-variants by changing date_from / date_till + stage_id:
+#   6a 2021-H1 | 6b 2021-H2 | 6c 2022 (war regime) | 6d 2023 | 6e 2024 | 6f 2025 | 6g 2026-YTD
+stage_id: stage_6c_2022
+notes: >
+  Same (interval, ctx, covariates) as the best frozen config from stages 1-5.
+  Walk-forward inside the listed sub-window only. The most important sanity
+  check: signal must survive regime shifts to be considered real.
+
+interval: 24
+date_from: "2022-01-01"
+date_till: "2022-12-31"
+
+tickers:
+  - SBER
+  - GAZP
+  - LKOH
+  - ROSN
+  - NVTK
+  - TATN
+  - GMKN
+  - PLZL
+  - MAGN
+  - NLMK
+  - MOEX
+  - VTBR
+
+indexes:        [IMOEX, MOEXOG, MOEXMM, MOEXFN, RGBI]
+futures_proxies: [BR, Si, GD]
+
+context_len: 250              # frozen from stage 1-5 winner
+horizon: 5
+quantiles: [0.1, 0.5, 0.9]
+
+walk_forward:
+  shift: 1
+  max_windows: 400
+
+covariates: full              # frozen from stage 5 winner
+
+eval_horizons:    [1, 2, 3, 5]
+primary_horizons: [2, 3, 5]
+baselines: [zero, last, momentum5, ar1]
+
+output_dir: runs

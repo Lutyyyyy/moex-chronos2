@@ -1,0 +1,48 @@
+# Stage 7 — Held-out final consolidation
+# Hard rule: metric window starts AT OR AFTER 2025-11-01. Earlier dates only feed context.
+stage_id: stage_7_holdout
+notes: >
+  Frozen config from stages 1-6. Walk-forward only inside the 2025-11-01 .. 2026-04-30
+  hold-out window. This is the headline-table run.
+
+interval: 24
+date_from: "2024-05-01"       # earlier dates used as context only; metric mask in runner
+date_till: "2026-04-30"
+
+# Hard mask (read by run_stage when present)
+metric_window:
+  from: "2025-11-01"
+  till: "2026-04-30"
+
+tickers:
+  - SBER
+  - GAZP
+  - LKOH
+  - ROSN
+  - NVTK
+  - TATN
+  - GMKN
+  - PLZL
+  - MAGN
+  - NLMK
+  - MOEX
+  - VTBR
+
+indexes:        [IMOEX, MOEXOG, MOEXMM, MOEXFN, RGBI]
+futures_proxies: [BR, Si, GD]
+
+context_len: 250
+horizon: 5
+quantiles: [0.1, 0.5, 0.9]
+
+walk_forward:
+  shift: 1
+  max_windows: 200
+
+covariates: full
+
+eval_horizons:    [1, 2, 3, 5]
+primary_horizons: [2, 3, 5]
+baselines: [zero, last, momentum5, ar1]
+
+output_dir: runs
