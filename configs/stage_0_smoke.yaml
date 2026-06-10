@@ -4,7 +4,7 @@ notes: >
   Short window, daily, core 12. Goal: pipeline runs end-to-end, cache populated,
   output schema readable by downstream stages. No statistical claim.
 
-interval: 24                # 15 / 60 / 24
+interval: 24                # 10 / 60 / 24
 date_from: "2024-01-01"
 date_till: "2024-06-30"
 

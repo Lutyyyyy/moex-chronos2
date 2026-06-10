@@ -15,7 +15,7 @@ First universe:
 - Metals / miners: `GMKN`, `PLZL`, `MAGN`, `NLMK`
 - Market / index proxy: `MOEX`, `VTBR`
 
-Liquidity filter: stable candles on 15m/60m, low missingness, meaningful volume. Avoid illiquid tickers at MVP stage. Scale to 30/100 only after the pipeline is validated.
+Liquidity filter: stable candles on 10m/60m, low missingness, meaningful volume. Avoid illiquid tickers at MVP stage. Scale to 30/100 only after the pipeline is validated.
 
 ---
 
@@ -26,7 +26,7 @@ Liquidity filter: stable candles on 15m/60m, low missingness, meaningful volume.
 **Answer:** Pull as much as ISS provides reliably; experiment on recent rolling windows.
 
 Suggested depth per interval:
-- **15m:** 6–12 months
+- **10m:** available back to 2011-12-08; use recent rolling windows (6–18 months typical — older regimes add noise)
 - **60m:** 1–2 years
 - **1d:** 3–5 years (use rolling recent context — older regimes add noise)
 
@@ -70,7 +70,7 @@ Optional later: open interest, RTSI, CNY/RUB, EUR/RUB, realized volatility, sect
 ## 4. Returns definition
 Form of the target variable.
 
-**Answer:** Log-returns, interval-based — `r_n = ln(P_n / P_{n-1})` computed on each interval's OHLC (15m / 60m / 1d). Use **close-to-close** returns first.
+**Answer:** Log-returns, interval-based — `r_n = ln(P_n / P_{n-1})` computed on each interval's OHLC (10m / 60m / 1d). Use **close-to-close** returns first.
 
 Later extensions:
 - Relative return: `r_ticker − r_index_or_sector`
@@ -85,11 +85,11 @@ How many steps ahead per interval?
 
 | Interval | Horizons (bars) | Equivalent |
 |----------|-----------------|------------|
-| 15m      | 1 / 2 / 4       | 15 / 30 / 60 min |
+| 10m      | 1 / 2 / 4       | 10 / 20 / 40 min |
 | 60m      | 1 / 2 / 4       | 1 / 2 / 4 hours |
 | 1d       | 3 / 5 / 10      | 3 days / 1 week / 2 weeks |
 
-**First priority:** 60m h=4, 15m h=4, 1d h=5. Avoid very long intraday horizons (e.g., 24×60m) at MVP.
+**First priority:** 60m h=4, 10m h=4, 1d h=5. Avoid very long intraday horizons (e.g., 24×60m) at MVP.
 
 ---
 
@@ -100,17 +100,17 @@ How many steps ahead per interval?
 **Answer:** Walk-forward windows.
 
 Shift size:
-- **15m:** shift by 4 bars
+- **10m:** shift by 4 bars
 - **60m:** shift by 1–4 bars
 - **1d:** shift by 1 day
 
 Minimum useful evaluation size:
-- **15m:** 200+ forecast windows
+- **10m:** 200+ forecast windows
 - **60m:** 150+ forecast windows
 - **1d:** 50+ forecast windows
 
 Context length:
-- **15m:** 500–1500 bars
+- **10m:** 500–1500 bars
 - **60m:** 300–1000 bars
 - **1d:** 200–500 bars
 
@@ -160,7 +160,7 @@ Candles endpoint:
 ```
 /iss/engines/stock/markets/shares/securities/{SECID}/candles.json
 ```
-Intervals used: `15`, `60`, `24` (15m, 60m, 1d).
+Intervals used: `10`, `60`, `24` (10m, 60m, 1d). **ISS exposes no 15m candle** — valid candle codes are 1, 10, 60, 24, 7, 31, 4 (per the ISS `durations` table); 10m is the finest native intraday bar.
 
 Why ISS first:
 - No broker dependency

@@ -1,11 +1,13 @@
-# Stage 3 — 15-minute interval, full study
+# Stage 3 — 10-minute interval, full study
+# (ISS has no 15m candle; 10m is the finest native intraday bar — served for
+#  shares, indexes AND FORTS, with depth back to 2011.)
 # Sub-variants by context_len: 3a=500, 3b=1000, 3c=1500
-stage_id: stage_3b_15m_ctx1000
+stage_id: stage_3b_10m_ctx1000
 notes: >
-  15-min bars, core 12 (drop any ticker with >5% missing bars at load time).
+  10-min bars, core 12 (drop any ticker with >5% missing bars at load time).
   Tests the "first 2-3 bars predictive" observation from the smoke run.
 
-interval: 15
+interval: 10
 date_from: "2024-05-01"
 date_till: "2026-04-30"
 
@@ -24,7 +26,7 @@ tickers:
   - VTBR
 
 indexes:        [IMOEX, MOEXOG, MOEXMM, MOEXFN]
-futures_proxies: [BR, Si, GD]   # 15m FORTS unavailable; resolver ffills 60m onto 15m grid
+futures_proxies: [BR, Si, GD]   # FORTS served natively at 10m (no 60m fallback)
 
 context_len: 1000          # also run with 500, 1500
 horizon: 5

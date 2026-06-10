@@ -22,7 +22,7 @@ Statistical power floor (rough):
 - Minimum windows per cell, per wiki §6 and tightened here:
   - **1d**: ≥ 100 windows (shift = 1 bar)
   - **60m**: ≥ 300 windows (shift = 4 bars)
-  - **15m**: ≥ 400 windows (shift = 4 bars)
+  - **10m**: ≥ 400 windows (shift = 4 bars)
 
 **Evaluation horizons.** User priority: predicted bars 2, 3, 5. We additionally log h=1 (cheapest sanity check) but it is excluded from "primary" tables. So horizons reported:
 - `h ∈ {2, 3, 5}` primary
@@ -64,7 +64,7 @@ Cache key: `{secid}_{engine}_{market}_{interval}_{date_from}_{date_till}.parquet
 ### Path A — zero-shot multivariate Chronos-2
 1. **Soft prefetch (one-time per interval).** `prefetch_universe(cfg)` walks every (secid, engine, interval) needed for stages 0–7 of this plan and pulls into Drive cache. Rate-limited (≥ 0.2 s/request), retries on 429/5xx with backoff, idempotent (skips files that already exist), logs misses.
 2. **Cache-only load.** `load_panel(cfg)` reads Parquet only. If a needed file is missing it errors out with the exact missing key — no silent ISS fall-through during experiments. (Switch to API-fall-through is a single flag for prod forecasting.)
-3. **Regularise.** `to_regular_series` (15m/60m → MOEX session grid; 1d → `asfreq("B")`) + ffill. Inner-join across tickers so the panel index is identical for every series — required for group attention.
+3. **Regularise.** `to_regular_series` (10m/60m → MOEX session grid; 1d → `asfreq("B")`) + ffill. Inner-join across tickers so the panel index is identical for every series — required for group attention.
 4. **Targets and covariates.**
    - target: log-return per ticker.
    - past covariates (broadcast across ids): IMOEX/MOEXOG/MOEXMM/MOEXFN/RGBI log-returns, Brent / USD-RUB / Gold log-returns, per-ticker dlog-volume.
@@ -123,11 +123,11 @@ Each stage stores results under `runs/{stage_id}/` with: `config.yaml` snapshot,
 - **Goals**: same three as Stage 1, plus check whether intraday DA decays with h faster than 1d does.
 - **Success criterion**: aggregate DA at h=2 ≥ 0.53 with bootstrap 95% CI lower bound > 0.50.
 
-### Stage 3 — 15-minute, full study
-- **Config**: `configs/stage_3_15m.yaml`
-- **Interval**: 15m
-- **Universe**: core 12 (drop any ticker with > 5% missing 15m bars after ffill — flagged at load)
-- **Date**: 2024-05-01 → 2026-04-30 (ISS reliability on 15m drops further back; will validate during prefetch)
+### Stage 3 — 10-minute, full study
+- **Config**: `configs/stage_3_10m.yaml`
+- **Interval**: 10m — finest native ISS intraday bar (ISS exposes no 15m candle; confirmed against the ISS `durations` table and per-market `candleborders`). 10m is served for shares, indexes and FORTS.
+- **Universe**: core 12 (drop any ticker with > 5% missing 10m bars after ffill — flagged at load)
+- **Date**: 2024-05-01 → 2026-04-30 (10m has depth back to 2011-12-08, so the window is a *choice* — kept aligned with the 60m study; widen if more intraday windows are needed. ~53 bars/session at 10m vs ~35 at 15m, so window counts are higher for the same calendar span.)
 - **Context grid**: {500, 1000, 1500} (sub-runs `stage_3a..c`)
 - **Horizon**: H=5, eval h ∈ {1, 2, 3, 5}
 - **Walk-forward**: shift=4, ≥ 400 windows per sub-run
@@ -199,12 +199,12 @@ Every stage's run emits:
 - **FORTS contract roll handling** (BR/Si/GD). **Resolved 2026-05-19.** ISS probes confirmed the design assumptions; resolver landed in `basic_cells.ipynb` section 4b. Notes vs the original 7-step plan:
   1. **Contract codes.** `{root}{month_letter}{year_digit}` works as-is. Roots BR (12 letters), Si/GD (HMUZ). 120/120 candidate SECIDs returned data in the 2021–2026 range (`1B_res.md`).
   2. **Active window.** Replaced expiry-from-`MATDATE` lookup with **per-bar front-month-by-volume selection** — same intent, simpler, and avoids a second endpoint per contract. The candles endpoint has no `OPENPOSITION` column anyway (`345_res.md`), so the alternative (history endpoint) would have meant fetching the full chain twice. Volume vs OI ranked the same contract as front on the spot-check date (BRK4 vs BRM4 on 2024-04-15).
-  3. **Per-contract candles.** Cached as `futures_forts_{secid}_{interval}_{from}_{till}.parquet` (matches the equity scheme via `_cache_key`). 60m paginates at PAGESIZE=500 inside `_iss_candles` — already handled. **15m FORTS not served by ISS**: resolver falls back to 60m and downstream `to_regular_series` ffills onto the 15m grid.
+  3. **Per-contract candles.** Cached as `futures_forts_{secid}_{interval}_{from}_{till}.parquet` (matches the equity scheme via `_cache_key`). 60m paginates at PAGESIZE=500 inside `_iss_candles` — already handled. **FORTS served natively at 10m/60m/1d** (BRK6 `candleborders` confirms interval 10): the resolver fetches each contract at the target interval, no cross-interval fallback. (ISS has no 15m candle for *any* market — see Stage 3.)
   4. **Stitch.** Implemented in `build_covariate_panel`: regrid `close` onto target interval, carry `contract_id` via reindex+ffill, compute log-return on the target grid, NaN the return wherever `contract_id != contract_id.shift(1)`. Stage 5e levels are exposed via the regridded `{name}_close` series (step jumps preserved, model sees the truthful regime change).
   5. **Cache key for resolved series.** `{root}_forts_resolved_{interval}_{from}_{till}.parquet`.
   6. **Validation.** Spot-check on BRJ4 / BRK4 / BRM4 (Task 4 / `345_res.md`): boundary jumps +0.61% and −4.81%, well under the `|r| > 0.20` red-flag threshold. The resolver prints a `WARN` line if any intra-contract bar exceeds 20% on load — flag for thin-day misselection.
   7. **Implementation site.** `_resolve_futures_chain(root, interval, date_from, date_till, cache_dir)` in `basic_cells.ipynb` §4b, called from `load_stage_inputs`. `build_prefetch_manifest` expands FORTS roots into the candidate SECID set so `prefetch_all` populates the cache up front.
-- **15m calendar features.** `hour` ∈ {10..18} is a 9-level categorical — Chronos handles continuous, so we pass it as float; revisit if calibration tables look bucketed.
+- **Intraday calendar features (10m/60m).** `hour` ∈ {10..18} is a 9-level categorical — Chronos handles continuous, so we pass it as float; revisit if calibration tables look bucketed.
 - **Multi-test correction.** Reporting per-cell binomial p + BH-adjusted q in stage-level table. Bonferroni for the headline aggregate claim only.
 
 ---
