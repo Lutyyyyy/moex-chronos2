@@ -1,0 +1,9 @@
+{
+  "stage_id": "stage_1c_daily_ctx250",
+  "n_windows": 400,
+  "mean_da_primary": 0.4905555555555556,
+  "median_da_primary": 0.48624999999999996,
+  "cells_signif_05": 0,
+  "mean_pearson_primary": -0.011704314780451986,
+  "mean_coverage_primary": 0.798125
+}
