@@ -29,7 +29,7 @@ futures_proxies:
 - BR
 - Si
 - GD
-context_len: 250
+context_len: 60
 horizon: 5
 quantiles:
 - 0.1
