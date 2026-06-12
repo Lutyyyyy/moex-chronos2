@@ -1,5 +1,6 @@
 # --- Excluded sub-workspaces / unrelated subprojects ---
 .claude/
+tmp/
 .obsidian/
 Clippings/
 tunnels/
