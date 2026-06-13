@@ -4,7 +4,15 @@ Snapshot for the next session. Path B (AutoGluon Chronos-2 fine-tuning) has been
 **implemented as a self-contained module under `path_b/`** following
 `path_b_implementation_prompt.md` and `B_plan_v2_cross_learning.md`. Code is written and
 **verified end-to-end against a mock AutoGluon** (control flow, schema, metrics, plots, CSV).
-It has **not** yet been run on a real GPU / real ISS data — that is the next step.
+
+**UPDATE (real GPU run, 2026-06-14):** Path B now runs **end-to-end on a real Colab T4 with
+real Drive-cached data**, validated on the **daily (interval 24)** config (`path_b_1d.yaml`).
+B0 zero-shot completes and produces real scores. The **60m/10m intraday runs FAIL** with
+`AssertionError: Prediction and data indices do not match` inside AutoGluon's metric — the
+irregular MOEX session grid (10:00–18:50 MSK) gives an index AutoGluon regularizes for
+predictions but not for the validation slice. **Daily works because interval==24 uses a
+regular business-day index (`asfreq("B")`).** Fixing intraday is the open code task
+(see TODO: intraday-index-fix).
 
 > NB: The implementation prompt asks to maintain `current_state.md` **at project root**.
 > The user's final instruction was *"Implement within path_b folder only. Let the rest be
@@ -14,10 +22,16 @@ It has **not** yet been run on a real GPU / real ISS data — that is the next s
 ---
 
 ## Current task
-Path B implemented as a self-contained Part-A-style notebook pipeline inside `path_b/`.
-Next: run `runner_B.ipynb` on a Colab GPU against a real panel (start with
-`configs/path_b_60m.yaml`), confirm B0 reproduces Path A zero-shot within tolerance, then
-read the comparison table.
+Path B pipeline is **validated on real GPU for daily**. Open questions block the intraday
+runs and the tuning design — see the **ASK** block below (data prep for 60m/10m, tuning
+target metric, training-data cropping, dividend gaps). Next concrete code task: fix the
+intraday index mismatch so 60m/10m run.
+
+> **Runner rename (2026-06-14):** `runner_B.ipynb` was **deleted** from the repo and replaced
+> by `colab_runner_B.ipynb` (the Colab-tested, ready-to-use runner: Drive-mount + `CANDIDATES`
+> path search, `%run $PATH_B_DIR/basic_cells_*.ipynb`, defaults to `path_b_1d.yaml`). Use
+> `colab_runner_B.ipynb` everywhere. References to `runner_B.ipynb` elsewhere in this file are
+> historical.
 
 ## Layout (self-contained `path_b/`, mirrors Part A's notebook idiom)
 The folder now carries **both** Part A and Part B side by side, so Path B runs without
@@ -30,7 +44,8 @@ reaching outside `path_b/`:
 | `basic_cells_B.ipynb` | **Single source of truth for Path B** (notebook form, Part A idiom: title → `## 0. Imports` → `## 1..7` one code cell per section). §0 ported Path A logic (config, panels, anchors, Chronos input builder, metrics, baselines, plots); §A config helpers; §B AutoGluon data adapters; §C run-dir + append-only CSV; §D B0–B4 hyperparameter builders; §E `run_path_b_experiment` + `run_path_b`; §F comparison utils + plots. |
 | `runner_B.ipynb` | Universal Path B runner (mirrors `runner_A.ipynb`): locate `path_b/` → `%run basic_cells_A.ipynb` → `%run basic_cells_B.ipynb` → load config → build panels → `run_path_b` → inspect tables/plots inline. Functions are called from globals (no `import`), exactly like Part A. |
 | `configs/path_b_10m.yaml` | Path B 10m config (inherits Path A `stage_3_10m`; ctx 768 = CTX_MAIN; H=3; horizons [1,2,3]). |
-| `configs/path_b_60m.yaml` | Path B 60m config (inherits Path A `stage_2_60m`; ctx 256 = CTX_MAIN; H=3; horizons [1,2,3]). |
+| `configs/path_b_60m.yaml` | Path B 60m config (inherits Path A `stage_2_60m`; ctx 256 = CTX_MAIN; H=3; horizons [1,2,3]). **Currently fails — intraday index mismatch.** |
+| `configs/path_b_1d.yaml` | Path B **daily** config (interval 24; ctx 128; H=3; horizons [1,2,3]). **Validated end-to-end on T4.** Regular business-day index sidesteps the intraday bug. |
 | `current_state.md` | This file. |
 
 `runs/path_b/...` and `scratchpads/path_b/...` are created at runtime by the runner.
@@ -109,7 +124,35 @@ reaching outside `path_b/`:
   all code cells parse; no lingering `import path_b_cells` / `PB.` / project-root
   `basic_cells.ipynb` references in the runner ✓.
 
+## Open questions (2026-06-14 — raised after the first real GPU runs)
+- **How to prepare 60m/10m data so fine-tuning runs without error?** The intraday session grid
+  (10:00–18:50 MSK) produces an index AutoGluon won't align (`Prediction and data indices do not
+  match`). Daily works via `asfreq("B")`. What's the right representation for intraday — ordinal/
+  integer timestamps, an explicit regular freq, or reshaping the panel? (See TODO intraday-index-fix.)
+- **Which metric is the target of tuning? (IMPORTANT)** Config sets `eval_metric: WQL` for
+  AutoGluon's internal validation, but the experiment's headline metric is directional accuracy
+  (DA) / the `delta_vs_b0` columns. Decide explicitly what we are optimizing — WQL, DA, correlation,
+  or coverage — because it drives candidate selection and `choose_reference_candidate`.
+- **How to crop the training data?** Currently `build_ag_train_frame` can take a `context_window`
+  (start,end). Decide the train/eval split policy: how much history per fit, rolling vs expanding,
+  whether to cap very old data, and how that interacts with walk-forward `shift`/`max_windows`.
+- **What to do with dividend gaps?** Ex-dividend days cause discrete price jumps → spurious large
+  log-returns. Decide whether to adjust prices (total-return), mask those bars, or leave as-is, and
+  whether it should match Path A's handling.
+
 ## TODO / ASK (unresolved — need a real run or a human call)
+- **TODO (intraday-index-fix):** Make 60m/10m run. The fix discussed: in `to_timeseries_dataframe`
+  (and the matching predict-side future frame in `run_path_b_experiment`), replace the irregular
+  session timestamps with a regular per-item sequence (e.g. synthetic hourly grid / ordinal) so
+  AutoGluon's predictions and validation share one index. Must patch BOTH train and predict sides
+  or the error just moves downstream. Calendar covariates are computed from real timestamps before
+  this step, so they stay correct.
+- **TODO (cross-learning diagnostic):** Test the `cross_learning_diagnostics: true` arm. It appears
+  to work (runs both `cross=True` and `cross=False` arms) but has not been run once end-to-end on
+  real GPU — run it once to confirm.
+- **TODO (negative-correlation fn):** Check whether AutoGluon / Chronos-2 exposes a
+  negative-correlation (anti-correlation) objective or metric we could use — relevant to the
+  tuning-target question above.
 - **TODO (run):** Execute `runner_B.ipynb` on a Colab GPU with `configs/path_b_60m.yaml`.
   Confirm `from autogluon.timeseries.models.chronos.chronos2 import Chronos2Model` succeeds
   (needs autogluon.timeseries **>= 1.5.0**); if it fails, upgrade AutoGluon before anything else.
@@ -133,7 +176,11 @@ reaching outside `path_b/`:
   `_TEMPLATE.md` after the first real run, with actual B0–B4 numbers.
 
 ## Last completed step
-Implemented + mock-verified Path B (module, runner, configs, this note).
+Ran Path B B0 end-to-end on a real Colab T4 with Drive-cached data. **Daily
+(`path_b_1d.yaml`) works**; **60m/10m fail** on the intraday index mismatch. Added
+`path_b_1d.yaml`; replaced `runner_B.ipynb` with `colab_runner_B.ipynb`.
 
 ## Next command to run
-Open `path_b/runner_B.ipynb` on a Colab T4 → run §0–§3 with `configs/path_b_60m.yaml`.
+Open `path_b/colab_runner_B.ipynb` on a Colab T4 → run with `configs/path_b_1d.yaml`
+(known-good). To unblock intraday, first do TODO intraday-index-fix, then retry
+`configs/path_b_60m.yaml`.
