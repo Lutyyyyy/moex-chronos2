@@ -1,0 +1,64 @@
+# Path B — 60-minute fine-tuning config.
+# Inherits Path A stage_2_60m fields (universe, dates, covariates, walk-forward) and
+# adds the path_b: block. Path B horizon is 3 (prediction_length=3), NOT Path A's 5.
+# CTX_MAIN for 60m per B_plan_v2 §6.4 = 256.
+stage_id: path_b_60m_ctx256
+notes: >
+  Path B (AutoGluon Chronos-2 fine-tuning) at 60-min. Inherits Path A stage_2_60m
+  representation; horizons [1,2,3], prediction_length=3, intervals_to_test [60].
+
+interval: 60
+date_from: "2023-01-01"
+date_till: "2026-04-30"
+
+tickers:
+  - SBER
+  - GAZP
+  - LKOH
+  - ROSN
+  - NVTK
+  - TATN
+  - GMKN
+  - PLZL
+  - MAGN
+  - NLMK
+  - MOEX
+  - VTBR
+
+indexes:        [IMOEX, MOEXOG, MOEXMM, MOEXFN]
+futures_proxies: [BR, Si, GD]
+
+context_len: 256           # CTX_MAIN for 60m (B_plan_v2 §6.4); CTX_SHORT 128 / CTX_LONG 384
+horizon: 3                 # Path B prediction_length (NOT Path A's 5)
+quantiles: [0.1, 0.5, 0.9]
+
+walk_forward:
+  shift: 4
+  max_windows: 500
+
+covariates: full
+
+eval_horizons:    [1, 2, 3]
+primary_horizons: [1, 2, 3]
+baselines: [zero, last, momentum5, ar1]
+
+output_dir: runs            # Path A key (required by load_config); Path B uses path_b.output_root
+seed: 42
+
+path_b:
+  enabled: true
+  output_root: runs/path_b
+  scratchpad_root: scratchpads/path_b
+  current_state_path: current_state.md
+  intervals_to_test: [60]
+  prediction_length: 3
+  eval_horizons: [1, 2, 3]
+  primary_horizons: [1, 2, 3]
+  cross_learning_main: true
+  cross_learning_diagnostics: false
+  num_val_windows: 3
+  refit_every_n_windows: 1
+  model_path: "amazon/chronos-2"   # pinned to match Path A HF weights (verified-API note)
+  chronos2_batch_size: 64
+  enable_ensemble: false
+  eval_metric: WQL

@@ -1,0 +1,27 @@
+# path_b/.gitignore — controls what THIS folder commits to GitHub.
+# Rule of thumb: code -> GitHub (tracked); artifacts -> Drive (ignored here).
+# These ignored patterns are exactly what push_drive.sh ships to moex-hack/ilia.
+
+# --- Fine-tuned models / checkpoints (-> Drive) ---
+ag_chronos2_ft/
+*.bin
+*.pt
+*.ckpt
+*.safetensors
+*.npz
+
+# --- Data / result artifacts (-> Drive) ---
+*.parquet
+*.csv
+
+# --- Executed notebooks with outputs (-> Drive) ---
+*_output.ipynb
+*_run.ipynb
+
+# --- Local caches / scratch (keep out of git entirely) ---
+moex_cache/
+skills/
+scripts
+__pycache__/
+.ipynb_checkpoints/
+.DS_Store
