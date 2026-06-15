@@ -34,7 +34,7 @@ path_a_locked:
   covariate_set: <selected covariate set from Part A>
   data_format: <selected canonical feature schema from Part A>
   quantile_levels: [0.1, 0.5, 0.9]
-  eval_metric_autogluon: <frozen continuous AutoGluon metric from Part A>
+  eval_metric_autogluon: <frozen continuous AutoGluon metric from Part A> -  metric for tuning ????
   decision_metrics: <frozen Path A evaluation package>
   holdout_start: <locked holdout date>
   holdout_end: <locked holdout date>

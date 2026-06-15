@@ -1,0 +1,55 @@
+stage_id: stage_2b_60m_ctx600
+notes: '60-min bars, core 12, ~3 years of intraday. shift=4 bars between walk-forward
+  anchors. Check intraday-signal decay h=2 vs h=5.
+
+  '
+interval: 60
+date_from: '2023-01-01'
+date_till: '2026-04-30'
+tickers:
+- SBER
+- GAZP
+- LKOH
+- ROSN
+- NVTK
+- TATN
+- GMKN
+- PLZL
+- MAGN
+- NLMK
+- MOEX
+- VTBR
+indexes:
+- IMOEX
+- MOEXOG
+- MOEXMM
+- MOEXFN
+futures_proxies:
+- BR
+- Si
+- GD
+context_len: 600
+horizon: 5
+quantiles:
+- 0.1
+- 0.5
+- 0.9
+walk_forward:
+  shift: 4
+  max_windows: 500
+covariates: full
+eval_horizons:
+- 1
+- 2
+- 3
+- 5
+primary_horizons:
+- 2
+- 3
+- 5
+baselines:
+- zero
+- last
+- momentum5
+- ar1
+output_dir: runs
