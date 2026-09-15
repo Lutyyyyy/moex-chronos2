@@ -21,6 +21,7 @@ runs/**/summary.json
 runs/**/config.yaml
 runs/**/*_output_*.md
 runs/**/*output_*.md
+runs/**/*output_*
 
 # --- Pasted Obsidian images ---
 Pasted image*
