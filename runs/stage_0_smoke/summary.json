@@ -1,9 +1,0 @@
-{
-  "stage_id": "stage_0_smoke",
-  "n_windows": 40,
-  "mean_da_primary": 0.47847222222222224,
-  "median_da_primary": 0.475,
-  "cells_signif_05": 0,
-  "mean_pearson_primary": 0.04241708268017295,
-  "mean_coverage_primary": 0.7638888888888888
-}

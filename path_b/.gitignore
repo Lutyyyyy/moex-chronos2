@@ -17,11 +17,10 @@ ag_chronos2_ft/
 # --- Executed notebooks with outputs (-> Drive) ---
 *_output.ipynb
 *_run.ipynb
+*_runner_B.ipynb
 
 # --- Local caches / scratch (keep out of git entirely) ---
 moex_cache/
-skills/
-scripts
 __pycache__/
 .ipynb_checkpoints/
 .DS_Store

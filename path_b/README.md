@@ -7,15 +7,15 @@ Chronos-2 on the MOEX panel via AutoGluon's `TimeSeriesPredictor`
 ## What lives here
 - Fine-tuning scripts / notebooks for Path B.
 - Path B configs (extends the stage configs in [`../configs/`](../configs/)).
-- The written plan is in [`../stage_B/B_plan_v1.md`](../stage_B/B_plan_v1.md).
-- [`COLAB_SKILL.md`](COLAB_SKILL.md) — bundled Colab CLI command reference (`colab skill`).
-- [`push_drive.sh`](push_drive.sh) / [`sync.sh`](sync.sh) — artifact → Drive and commit+sync helpers.
+- The current written plan is in [`plansprompts/B_plan_v2_cross_learning.md`](plansprompts/B_plan_v2_cross_learning.md).
+- [`skills/COLAB_SKILL.md`](skills/COLAB_SKILL.md) — bundled Colab CLI command reference (`colab skill`).
+- [`scripts/push_drive.sh`](scripts/push_drive.sh) / [`scripts/sync.sh`](scripts/sync.sh) — artifact → Drive and commit+sync helpers.
 
 ## Where things go (project sync rules)
 - **Code** (this folder's `.py` / `.ipynb` / configs) → **GitHub** only.
 - **Artifacts** (fine-tuned model `ag_chronos2_ft/`, `*.parquet`, result `*.csv`,
   executed `*_run.ipynb`) → **partner's Google Drive** `moex-hack/ilia`, pushed
-  automatically on each commit (see [`push_drive.sh`](push_drive.sh); the local
+  automatically on each commit (see [`scripts/push_drive.sh`](scripts/push_drive.sh); the local
   `.git/hooks/post-commit` fires it).
 
 ## Running on a Colab GPU (Colab CLI)
@@ -28,7 +28,7 @@ colab download -s ft ag_chronos2_ft ./ag_chronos2_ft
 colab stop -s ft
 ```
 **Gotcha:** `colab exec` defaults to a **30 s** timeout — always pass `--timeout 1800`
-for real runs or it kills the job mid-execution. Full command reference: [`COLAB_SKILL.md`](COLAB_SKILL.md).
+for real runs or it kills the job mid-execution. Full command reference: [`skills/COLAB_SKILL.md`](skills/COLAB_SKILL.md).
 
 ## T4 note
 Free-tier T4 has **no bfloat16** — use `float16` (the pipeline picks dtype by GPU

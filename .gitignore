@@ -11,6 +11,17 @@ repo_res/
 *.parquet
 *.pdf
 
+# --- Generated experiment artifacts ---
+.tmp.driveupload/
+tmp/
+runs/**/preds/
+runs/**/plots/
+runs/**/metrics*.csv
+runs/**/summary.json
+runs/**/config.yaml
+runs/**/*_output_*.md
+runs/**/*output_*.md
+
 # --- Pasted Obsidian images ---
 Pasted image*
 
@@ -36,4 +47,5 @@ __pycache__/
 # --- OS ---
 .DS_Store
 Thumbs.db
+desktop.ini
 gp.md
