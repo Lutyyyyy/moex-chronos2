@@ -1,5 +1,6 @@
 # --- Excluded sub-workspaces / unrelated subprojects ---
 .claude/
+!algo_data/.claude/
 .obsidian/
 Clippings/
 tunnels/
