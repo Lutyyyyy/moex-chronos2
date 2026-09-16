@@ -22,7 +22,10 @@ and stop — do not retry with different hyperparameters to chase significance.
 
 ## Data / config notes
 - **Data source**: `algo_data`'s AlgoPack pull (2026-09-17), not the ISS cache —
-  `data_source: algopack`, `algopack_processed_path: ../algo_data/data/processed/candles_1d/shares.parquet`.
+  `data_source: algopack`, `algopack_processed_path: algo_data/data/processed/candles_1d/shares.parquet`
+  (relative to `PROJECT_DIR` — i.e. `algo_data/` sits as a sibling *inside* the Colab project
+  folder alongside `basic_cells.ipynb`, not one level up; fixed 2026-09-17 after a real
+  Colab run hit `PROJECT_DIR` being flat, not nested under `path_a/` — see run log).
   Indexes (IMOEX etc.) and futures (BR/Si/GD) still come from ISS as before (algo_data's
   index/futures output isn't wired into `load_stage_inputs` — see `basic_cells.ipynb` §5) —
   first run needs a fresh ISS prefetch for 2020-2024, not yet cached locally.
@@ -75,6 +78,7 @@ justified experiment — not a silent retry of the same test.
 | Date | Arm | Notes / changes since last run |
 |------|-----|--------------------------------|
 | 2026-09-17 | — | Configs written + validated (load_config, mock predict_df call). Not yet run. |
+| 2026-09-17 | — | First real Colab attempt failed at the "source basic_cells.ipynb" step: `PROJECT_DIR` is flat (`MyDrive/moex-hack/`, `basic_cells.ipynb` directly inside it), not nested under `path_a/` as locally structured — mismatch between the repo's `path_a/` folder and the uploaded Drive layout. Fixed by using `algopack_processed_path: algo_data/data/processed/candles_1d/shares.parquet` (no `../`) and re-packaging the Colab upload as a flat `moex-hack/{basic_cells.ipynb, runner.ipynb, configs/, algo_data/}` folder. Not yet re-run. |
 
 ## Top-line numbers (paste from each arm's `summary.json`)
 ### Multivariate

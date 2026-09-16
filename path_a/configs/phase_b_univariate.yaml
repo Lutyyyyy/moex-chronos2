@@ -20,7 +20,7 @@ notes: >
   algo_data/current_state.md session log, 2026-09-17).
 
 data_source: algopack
-algopack_processed_path: ../algo_data/data/processed/candles_1d/shares.parquet
+algopack_processed_path: algo_data/data/processed/candles_1d/shares.parquet
 min_ticker_coverage: 0.9
 
 group_mode: univariate
