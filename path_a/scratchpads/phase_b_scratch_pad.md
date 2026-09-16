@@ -53,6 +53,24 @@ and stop — do not retry with different hyperparameters to chase significance.
   is the actual switch, default `False`, batched-but-independent either way. No separate
   univariate driver was needed — same `predict_df` call, one boolean kwarg.
 
+## Pre-registered: single run per arm, no context_len sweep (decided 2026-09-17, before any run)
+User raised a fair concern before running anything: does a single run of each config give a
+solid enough answer, given (a) Chronos-2's quantile forecasting has internal sampling, so a
+rerun of the identical config could vary; (b) `context_len=250` wasn't swept for Phase B
+specifically, just carried over from Stage 1c; (c) one specific 16-ticker panel could happen
+to be unusually correlated or uncorrelated, biasing the result either way.
+**Decision: single run per arm at context_len=250, as currently configured.** Explicitly
+NOT expanding to a context_len grid (e.g. 128/250/500) up front, to avoid a shape of
+experiment where the gate rule has to be improvised after seeing results — that's the kind
+of hindsight-tuning the pre-registration is meant to prevent.
+**However**: the single-run caveats above are real and are logged here BEFORE the run, so
+the gate decision below must be read as conditional on this one context_len — not "does
+multivariate ever help," only "does it help here." If the result is a **clean pass or clean
+fail**, treat it as decisive per the stopping rule (§Goal) — do not chase it further. If the
+result is **borderline** (e.g. ΔDA marginal, McNemar p close to the BH threshold), that is
+itself the trigger to explicitly propose a follow-up context_len sweep as a new, separately
+justified experiment — not a silent retry of the same test.
+
 ## Run log
 | Date | Arm | Notes / changes since last run |
 |------|-----|--------------------------------|
