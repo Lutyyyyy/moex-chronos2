@@ -1,15 +1,15 @@
-# Stage X — scratchpad
+# Phase X — scratchpad
 
-> Copy this template to `stage_X_scratch_pad.md` when starting a new stage.
-> Single source of running notes for that stage — what was actually run, what came out, what to tweak.
+> Copy this template to `phase_<letter>_<name>_scratch_pad.md` when starting a new phase run.
+> Single source of running notes for that run — what was actually run, what came out, what to tweak.
 
 ## Pointer
-- Config: `configs/stage_X.yaml`
+- Config: `configs/phase_<letter>_<name>.yaml`
 - Output dir: `runs/<stage_id>/`
 - Started: `<YYYY-MM-DD>`
 - Status: `pending | running | done | blocked`
 
-## Goals (copied from `exp_plan.md` for quick reference)
+## Goals (copied from `exp_plan.md` §3b for quick reference)
 - ...
 
 ## Configuration deviations from plan
@@ -19,7 +19,7 @@ List any knob that diverges from `exp_plan.md` and why.
 ## Run log
 | Date | Sub-id | Notes / changes since last run |
 |------|--------|--------------------------------|
-| YYYY-MM-DD | stage_Xa | initial run |
+| YYYY-MM-DD | phase_Xa | initial run |
 
 ## Top-line numbers (paste from `summary.json`)
 ```

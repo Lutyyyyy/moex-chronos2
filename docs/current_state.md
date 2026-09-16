@@ -1,0 +1,178 @@
+# Current State — MOEX × Chronos-2 Project
+
+Snapshot for the next Claude instance. Picks up after the first successful Stage 0 smoke run (2026-06-12). The single-window prototype is done; the project is now organised around a stage-driven framework backed by YAML configs and a universal runner. **Stage 0 smoke has PASSED end-to-end — the pipeline is validated; Stage 1 is the next run.**
+
+> **Repo reorganized 2026-09-15**: Path A moved from repo root into `path_a/` (mirroring
+> `path_b/`); loose root docs consolidated into `docs/`. The "Files in repo" table below and
+> the numbered session log after it describe file locations **as they were at the time each
+> entry was written** — for current paths see the root [README.md](../README.md) and
+> [index.md](index.md). Historical entries are left unedited below (they're a record, not a
+> spec); only paths in this note and the table header are current.
+
+## Files in repo (paths current as of the 2026-09-15 reorg)
+
+| File / dir | Status | Purpose |
+|------------|--------|---------|
+| `README.md` | **NEW** | Root orientation: Path A vs Path B, where to start. |
+| `docs/index.md` | Registry | Full descriptions + update rules per file. Read before editing/creating any file in the repo. |
+| `docs/wiki.md` | Stable | MVP design decisions (universe, history, covariates, returns, horizons, walk-forward, metrics, ISS source). |
+| `docs/devdocs.md` | Stable | Short experiment overview. Superseded operationally by `exp_plan.md`. |
+| `docs/exp_plan.md` | Master plan | Statistical framing, Path A + Path B pipelines, stages 0–7 (config / inputs / goals / data sources / success criteria), results-per-stage spec. |
+| `docs/project_brief.md` | Reference | Project brief / architecture proposal for a math-strong, non-trading audience. |
+| `docs/probes/forts_iss_probes.md` | Historical record | Raw ISS API probe output (merged from former `1B_res.md` + `345_res.md` + `Colab_user_tasks.md`) behind the FORTS chain resolver. |
+| `docs/runs_empty_futures.md` | Historical record | Raw log behind the 15m→10m intraday decision (former `runs/empty_futures.md`). |
+| `path_a/basic_cells.ipynb` | Code library | Single source of truth for reusable pipeline code (30 cells: config loader, soft prefetcher, FORTS resolver, cache-only loaders incl. AlgoPack adapter, panel + covariates, Chronos input builder, walk-forward driver, metrics, baselines, plots, `run_stage`). |
+| `path_a/runner.ipynb` | Universal runner | Mounts Drive → sources `basic_cells.ipynb` → reads one config → `run_stage(cfg_path)`. Switch stages by editing one cell. |
+| `path_a/configs/` | **Empty (2026-09-17)** | Numbered-stage scheme retired — see pivot entry 14/15 below. New configs use `phase_<letter>_<name>.yaml`, written when each phase starts; none exist yet. |
+| `path_a/scratchpads/_TEMPLATE.md` | Template | Template for future phase running notes. |
+| `path_a/archive/` | **NEW (2026-09-17)** | Concluded/superseded material, kept for reference — not read by active code. `legacy_notebooks/` (`moex_chronos2_pipeline.ipynb`, `Chronos2_Roma.ipynb`), `concluded_stages/` (all `stage_0`–`stage_7` configs/scratchpads — run output stays live at `runs/`). See `archive/README.md`. |
+| `algo_data/` | **NEW (2026-09-17)** | MOEX AlgoPack extraction pipeline, sibling to `path_a/`/`path_b/`. Feeds `path_a` via `load_from_algopack`. See `algo_data/docs/usage.md`. |
+| `path_b/` | Path B | AutoGluon fine-tuning; see `path_b/README.md` and `path_b/current_state.md`. |
+| `runs/stage_0_smoke/` | **Populated (2026-06-12)**, concluded | First real run output: config snapshot, metrics{,_aggregate,_baselines}.csv, summary.json, plots/, output_002.md log. Config archived; output stays live here. |
+| `runs/stage_2b_60m_ctx600/` | **Populated (2026-09)**, concluded | Stage 2b result — clean negative (DA≈0.485, 0/48 significant), triggered the project pivot. Config archived; output stays live here. |
+| `runs/` | Output root | Namespace: `runs/<stage_id>/{config.yaml, preds/, metrics.csv, metrics_aggregate.csv, metrics_baselines.csv, summary.json, plots/}`. |
+
+## What changed this session
+
+1. **Framework**: introduced single-source-of-truth split — `basic_cells.ipynb` (code) + `runner.ipynb` (driver) + `configs/*.yaml` (parameters) + `scratchpads/*.md` (notes) + `exp_plan.md` (plan). Rules written into `CLAUDE.md`.
+2. **Statistical framing**: every stage reports DA + binomial p + Wilson 95% CI + BH-corrected q across (ticker × horizon) cells, Pearson/Spearman, amplitude calibration |pred|/|true|, q10–q90 coverage. Baselines (B0 zero / B1 last / B2 mom5 / B3 AR(1)) computed on the same windows.
+3. **Primary horizons**: h ∈ {2, 3, 5} (per user). h=1 logged as companion only.
+4. **Soft prefetcher**: rate-limited (≥0.25 s/req), exp-backoff retry on 429/5xx, idempotent (skips cached files), multi-stage manifest (union across all 8 stage configs). Cache target: Drive (`MyDrive/moex_cache/`).
+5. **Cache-only experiments**: `load_cached(...)` raises `CacheMiss` unless `allow_api_fallback=True`. Flip on for live forecasting only.
+6. **Universal runner**: one notebook drives every stage. Two Colab sessions can run different stages in parallel — cache is shared, outputs namespaced by `stage_id`.
+7. **Walk-forward driver**: looping `predict_df`, checkpoints `preds_partial.parquet` every 25 windows.
+8. **CLAUDE.md slimmed (2026-05-16)**: verbose per-file descriptions moved to `index.md`; CLAUDE.md INDEX is now one-liners. Hard rule added: read `index.md` before editing/creating any repo file.
+9. **Price-level covariates queued (2026-05-16)**: design question recorded — Brent and USD/RUB *levels* (not just returns) carry regime info Chronos cannot recover from short-context returns. Recorded in wiki §3 (open extension) and added as Stage 5 sub-run **`5e: full + price_levels`** in `exp_plan.md` (encoding: `log(price)` and/or `*_z252` rolling-z, never raw price). Depends on FORTS resolver landing first.
+10. **FORTS resolver scoped (2026-05-16)**: deferred to a dedicated session. Concrete 7-step plan written into `exp_plan.md` §5 (contract code generator, active-range from `MATDATE`, per-contract pulls, inside-contract returns, validation rule). No implementation yet — would risk silently corrupting the panel without live ISS validation.
+11. **FORTS resolver landed (2026-05-19)**: ISS probes confirmed (a) `ASSETCODE` carries the root, (b) guess-and-probe over `{root}{letter}{year_digit}` finds every contract in 2021–2026 (120/120 hit), (c) candles endpoint has no `OPENPOSITION` (volume used for front-month selection), (d) 60m caps at 500 rows/page (paginated in existing `_iss_candles`), (e) ~~15m FORTS unavailable — resolver fetches 60m and ffills onto 15m grid~~ **[corrected 2026-06-10: ISS has no 15m candle for *any* market — the whole intraday stage moved to 10m, which FORTS serves natively; no 60m fallback. See session entry 12.]** Section 4b added to `basic_cells.ipynb` (`FORTS_LETTER_MAP`, `_enumerate_contracts`, `_resolve_futures_chain`). `build_prefetch_manifest` / `load_stage_inputs` / `build_covariate_panel` patched. All 8 stage configs flipped to `futures_proxies: [BR, Si, GD]`. ISS validation evidence in `1B_res.md` and `345_res.md`; per-task probe spec in `Colab_user_tasks.md`.
+12. **Intraday stage moved 15m → 10m (2026-06-10)**: the first bulk prefetch returned *all* shares + indexes empty at interval=15 (`runs/empty_futures.md` lines 162–177). Root cause: **ISS has no 15-minute candle** — valid candle codes are `1, 10, 60, 24, 7, 31, 4` (verified against the global ISS `durations` table and per-market `candleborders` for shares/index/FORTS). Not a free-tier limit; AlgoPack (paid) uses the same set + fixed 5-min SuperCandles, no 15m either. Resolution: replaced the whole 15m intraday stage with **10m** (finest native bar, served for shares/indexes/FORTS back to 2011). Edits: `basic_cells.ipynb` — `load_config` assert now `(10, 60, 24)`; dropped the `60 if interval==15` FORTS fallback in `build_prefetch_manifest` + `_resolve_futures_chain` (FORTS serves 10m natively); updated §4b notes. `configs/stage_3_15m.yaml` → `configs/stage_3_10m.yaml` (`stage_id` `stage_3b_10m_ctx1000`, `interval: 10`). Docs synced: `wiki.md`, `exp_plan.md`, `devdocs.md`, `index.md`. Bar-based knobs (ctx grid, horizons, shift) unchanged. **Stale 10m FORTS cache from before this fix may not exist yet** — next prefetch will fill it. Historical chat/log files (`chat.md`, `gp.md`, `answers.md`, `pr*.md`, `Colab_user_tasks.md`, `runs/empty_futures.md`) left as-is (records, not specs).
+
+13. **Stage 0 smoke PASSED + pipeline hardening (2026-06-12)**: first real `run_stage` execution.
+    - **Bug found & fixed (run 001 → 002)**: `context_len: 250` exceeded the 2024-H1 daily panel (only 127 business days) → `walk_forward_anchors` produced 0 windows → `per_cell_metrics` crashed on an empty preds frame (`KeyError: 'id'`). Fix: `configs/stage_0_smoke.yaml` `context_len 250→60` (→ 40 windows). Hardened `per_cell_metrics` to return an empty frame when preds is empty/column-less (graceful 0-window exit instead of crash).
+    - **Negative cache for ISS empties** (`basic_cells.ipynb` §4): the FORTS manifest enumerates every candidate contract (`_enumerate_contracts` → BR×12 letters × ~8 years, etc.); most don't overlap the window and ISS returns empty. Old `prefetch_one` printed `EMPTY` but wrote nothing → ~50 dead contracts re-queried every run. Now genuine empties are written as a zero-row parquet (negative-cache marker) so each empty key hits ISS at most once. To avoid poisoning the cache on a transient outage, `_iss_candles` now **raises** on transport failure / exhausted retries (also fixed a latent fall-through that called `.json()` on a 5xx response); only true 200-empties get cached.
+    - **Source-transparent prefetch logging**: `prefetch_one` prints exactly one aligned line per key — `CACHE` / `CACHE-NEG` / `ISS` / `ISS-EMPTY` / `FAIL` — with the full parquet path + row count, so a run log shows whether ISS was touched and where data came from.
+    - **Warning cleanup**: guarded Pearson/Spearman against constant input (`np.std==0`) — the `zero` baseline's all-zero vector was spamming `RuntimeWarning: invalid value encountered in divide` + `ConstantInputWarning`. Result unchanged (NaN), just no log noise.
+    - **Results** (`runs/stage_0_smoke/summary.json`, primary h∈{2,3,5}): 40 windows, `mean_da 0.478`, `median_da 0.475`, `mean_pearson 0.042`, `coverage 0.764`, **0/48 cells significant** at BH-0.05. Amplitude ratio ~0.20–0.30 (forecasts shrink toward zero). All within the [0.40,0.60] sanity band — exactly a coin-flip, which is correct for a 127-day daily smoke with no statistical claim. **Pipeline validated; no edge expected or found at this scale.**
+    - Committed `2b1523a`, pushed to `origin/main`.
+
+14. **Project pivot + `algo_data/` integration (2026-09-17)**: Stage 2b (60m, 12 hand-picked
+    tickers, 500 windows) completed and returned a clean negative result (DA≈0.485, 0/48
+    BH-significant cells, Pearson≈0 — see `runs/stage_2b_60m_ctx600/summary.json`). Project
+    goals pivoted: (1) gate — does multivariate grouping beat univariate forecasting at all,
+    on a large liquid universe; (2) if the gate passes, systematically screen many series for
+    lead-lag dependencies (discovery/confirmation split, no leakage) rather than hand-picking
+    pairs; (3) stretch — toy backtest, explicitly educational framing. Full plan in
+    `tmp/plans/` (local, not committed).
+    - **`algo_data/` discovered**: a colleague-built, already-tested MOEX AlgoPack extraction
+      pipeline (own `.claude/CLAUDE.md`, 40+ offline tests, live-verified paid API key) — richer
+      than plain ISS (candles + tradestats/orderstats/obstats/hi2/futoi). Adopted as a third
+      top-level component (`algo_data/`, sibling to `path_a/`/`path_b/`).
+    - **Equity universe selection** (`algo_data/src/algopack_pipeline.py`): added
+      `rank_equity_universe()`/`save_equity_universe()` — filters TQBR shares to real equities
+      (`INSTRID == "EQIN"`, excludes ETFs/funds), checks history length/missingness per
+      candidate, ranks survivors by turnover, full audit trail (every candidate + status, not
+      just survivors). Run 2026-09-17: 506 candidates → 80 selected
+      (`algo_data/data/universe/equity_universe.yaml`, gitignored). 5 new offline tests
+      (`algo_data/tests/test_universe.py`); `algo_data/config.md`'s `tickers.shares` **not yet**
+      updated to use the new list (still the original 10-ticker panel) — pending.
+    - **`path_a` ingestion adapter** (`basic_cells.ipynb` §5, cell 13): `load_from_algopack(processed_path, tickers)`
+      reshapes `algo_data`'s long-format Parquet (`ticker, timestamp, ...`, tz-aware MSK) into
+      the same `{ticker: df}` shape the existing ISS-cache path produces (`timestamp`→`begin`,
+      tz stripped). `load_stage_inputs` branches on `cfg["data_source"] == "algopack"` (new
+      optional config key; default unset = unchanged ISS-cache behavior — all 8 existing stage
+      configs unaffected, confirmed by regression test). Downstream (`build_price_panel`,
+      `assemble_panels`, everything after) needs zero changes — same shape in, same shape out.
+    - **Coverage guard** (`basic_cells.ipynb` §6, cell 15): `build_price_panel` gained
+      `min_ticker_coverage` (default 0.98, config key `min_ticker_coverage`). Measures each
+      ticker's **raw, pre-ffill** bar coverage of the union calendar (coverage must be computed
+      before `to_regular_series`'s `.asfreq().ffill()`, which otherwise makes a 70%-complete
+      series look 100% complete on its own grid — caught by a synthetic-data test during
+      implementation) and drops/logs tickers below threshold before the `dropna(how="any")`
+      inner join, plus a shrinkage diagnostic (`union_days` vs `joined_days`). Addresses the
+      "one illiquid ticker silently shrinks every other ticker's date range" risk at 50-100
+      ticker scale. Verified via a synthetic 3-ticker test (one deliberately gappy) plus a
+      regression test confirming the existing ISS-cache path is byte-for-byte unaffected.
+    - All changes verified: notebook JSON valid, every code cell's Python syntax checked, both
+      new and existing (`assemble_panels`) paths smoke-tested against synthetic data before
+      relying on them for real config edits.
+
+15. **Numbered-stage scheme retired (2026-09-17)**: following the pivot (entry 14), the
+    remaining `stage_1`/`stage_3`–`stage_7` configs and `stage_1_scratch_pad.md` are archived
+    to `path_a/archive/concluded_stages/` — see `archive/README.md` for per-file disposition
+    (stage_1 was mid-flight, not concluded normally; stage_3–7 were never run). `path_a/configs/`
+    is now empty; `runner.ipynb`'s `CONFIG_PATH` set to `None` with an explanatory comment.
+    Going forward, configs are named `phase_<letter>_<name>.yaml` per the Phase A–D structure
+    (`phase_b_multivariate.yaml` / `phase_b_univariate.yaml` next, when Phase B starts — not
+    written yet). The table below is kept as a **historical record** of the old scheme, not a
+    current plan.
+
+## Stages (Path A) — retired scheme, historical record only (see entry 15)
+
+| Stage | Interval | Config | What it answers |
+|-------|----------|--------|-----------------|
+| 0 smoke ✅    | 1d  | `archive/concluded_stages/stage_0_smoke.yaml` | Pipeline + cache + output schema end-to-end. No claim. **PASSED 2026-06-12** (40 windows, DA~0.48, ctx 250→60). |
+| 1 daily (superseded) | 1d  | `archive/concluded_stages/stage_1_daily.yaml` | Full daily study, context grid {64,128,250,500}. Only 1c (ctx250) ran before the pivot retired this stage; 1a/1b/1d never run. |
+| 2 60m ✅      | 60m | `archive/concluded_stages/stage_2_60m.yaml` | Intraday signal at 60m, context grid {300,600,1000}. **Concluded**: clean negative result (DA≈0.485, 0/48 significant) — triggered the project pivot (session entry 14). |
+| 3 10m (never run) | 10m | `archive/concluded_stages/stage_3_10m.yaml` | High-frequency test, context grid {500,1000,1500}. (10m = finest native ISS intraday bar; no 15m exists.) |
+| 4 sector (never run) | best | `archive/concluded_stages/stage_4_sector.yaml` | Does intra-sector group attention beat mixed grouping? |
+| 5 covariates (never run) | best | `archive/concluded_stages/stage_5_covariates.yaml` | Ablation: none / calendar_only / market_only / full. |
+| 6 stability (never run) | best | `archive/concluded_stages/stage_6_stability.yaml` | Regime sub-windows (2021-H1..2026-YTD). |
+| 7 hold-out (never run) | best | `archive/concluded_stages/stage_7_holdout.yaml` | Headline table. Metric window locked to 2025-11-01..2026-04-30. |
+
+## Wiki decisions (still authoritative)
+
+- Universe: 12 blue chips (SBER, GAZP, LKOH, ROSN, NVTK, TATN, GMKN, PLZL, MAGN, NLMK, MOEX, VTBR).
+- Covariates MVP: IMOEX/MOEXOG/MOEXMM/MOEXFN/RGBI returns, Brent / USD-RUB / Gold returns, per-ticker dlog-volume, calendar (hour/dow/dom/month, +session_open intraday). Leakage rule preserved.
+- Target: log-returns, close-to-close.
+- Data: MOEX ISS direct.
+
+## Chronos-2 hard limits (asserted in `load_config`)
+
+- Max context: 8192 — every configured `context_len` fits.
+- Max horizon: 1024 — H=5 trivially fine.
+- Multivariate via `id_column`; past covariates as extra context columns; future covariates via `future_df` (calendar only).
+- T4: fp16 (Turing emulates bf16); Ampere+: bf16.
+
+## Known gaps / open items
+
+- **Price-level covariates (Stage 5e)** still queued. Encoding rule already decided (log + optional rolling-z 252; never raw price). The resolver now exposes the stitched `close` series (`{name}_close` regridded), so adding `log(close)` / rolling-z as past covariates is a localised patch in `build_covariate_panel`. Not wired yet — done when Stage 5 sub-runs are scheduled.
+- **10m availability**: ISS has no 15m candle at all (root cause of the original Stage 3 all-empty prefetch). Switched to 10m, which is served for shares / indexes / FORTS back to 2011-12-08. Stage 3's 2024-05-01 start is now a deliberate choice (aligned with the 60m study), not a depth limit — widen freely if more windows are wanted.
+- **`metric_window` not enforced**: `run_stage` parses `cfg["metric_window"]` but never applies it as a hard mask. This is now Phase C's leakage guard (discovery-vs-confirmation split needs this to actually work) — fix when Phase C lands, not deferred indefinitely. (Minor edit in `run_stage` — filter `preds` by `t_anchor` inside `metric_window` before the metric pass.)
+- **Path B (AutoGluon fine-tune)** is sketched in `exp_plan.md` §6 and in the legacy `path_a/archive/legacy_notebooks/moex_chronos2_pipeline.ipynb` §7 but not yet wired into the runner. Queue: after Stage 7.
+- **Batching at 10m × ≥400 windows × 12 series**: not stress-tested. T4 should hold; `preds_partial.parquet` checkpoint every 25 windows is the recovery path.
+- **CatBoost baseline** (wiki §7) is not in B0–B3. Optional Path B-era addition.
+- **`algo_data/config.md`'s `tickers.shares`** still holds the original 10-ticker hand-picked
+  panel, not the new 80-ticker `equity_universe.yaml`. Update before running the full
+  historical AlgoPack pull for the pivot's Phase B/C.
+- **Full AlgoPack historical run not yet executed** for the expanded universe — `algo_data`'s
+  own `needed.md` still flags Colab↔`apim.moex.com` reachability as untested; do this before
+  relying on Colab for the run (works fine locally per this session's live smoke tests).
+
+## Suggested next session
+
+**Pivot Phase B (multivariate-vs-univariate gate)** — Phase A (universe selection + `path_a`
+ingestion adapter) is done as of 2026-09-17.
+1. Expand `algo_data/config.md`'s `tickers.shares` to a stratified subsample of the 80-ticker
+   `equity_universe.yaml` (~20-25 tickers, per the gate's cost-control design — not the full 80,
+   that's reserved for Phase C screening); scope `datasets: [candles]`, `candles.intervals: [1d]`
+   for the first pull (cheap, sufficient for the gate).
+2. Run `algo_data`'s pipeline (locally confirmed working; Colab reachability still unverified —
+   check that first if using Colab) to produce `processed/candles_1d/shares.parquet`.
+3. Write `path_a/configs/stage_8a_multivariate.yaml`/`stage_8b_univariate.yaml` with
+   `data_source: algopack`, `algopack_processed_path` pointing at that Parquet.
+4. Before writing the univariate walk-forward driver: verify against the `chronos-forecasting`
+   package (on Colab, where it's installed) whether `predict_df` truly requires N separate
+   calls for independent per-series forecasting, or has a cheaper batching path — this
+   determines Phase B's wall-clock cost and must be checked, not assumed.
+5. Add `group_mode` to `build_chronos_inputs`/`run_walk_forward` (cells 17/19); pre-registered
+   stopping rule (paired McNemar test, BH-corrected) — see the pivot plan for the exact
+   acceptance criterion.
+6. Write `path_a/configs/phase_b_multivariate.yaml` / `phase_b_univariate.yaml` once the above
+   is wired (config folder is currently empty — see session entry 15).
+
+**Note**: the old Stage 1 daily-study continuation (1a/1b/1d) is **not** carried forward — it
+belonged to the retired numbered-stage plan and was superseded by the pivot (entry 15). Phase
+B's multivariate/univariate gate replaces it as the next thing to run.
+
+**Carryover items** (unchanged, see Known gaps): `metric_window` enforcement (now scoped to
+Phase C), price-level covariates, Path B fine-tune wiring.

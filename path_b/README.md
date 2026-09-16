@@ -2,11 +2,11 @@
 
 Code and configs for **Path B** of the MOEX × Chronos-2 experiment: fine-tuning
 Chronos-2 on the MOEX panel via AutoGluon's `TimeSeriesPredictor`
-(vs. Path A's raw zero-shot forecast in [`../moex_chronos2_pipeline.ipynb`](../moex_chronos2_pipeline.ipynb)).
+(vs. Path A's raw zero-shot forecast in [`../path_a/archive/legacy_notebooks/moex_chronos2_pipeline.ipynb`](../path_a/archive/legacy_notebooks/moex_chronos2_pipeline.ipynb)).
 
 ## What lives here
 - Fine-tuning scripts / notebooks for Path B.
-- Path B configs (extends the stage configs in [`../configs/`](../configs/)).
+- Path B configs (extends the stage configs in [`../path_a/configs/`](../path_a/configs/)).
 - The current written plan is in [`plansprompts/B_plan_v2_cross_learning.md`](plansprompts/B_plan_v2_cross_learning.md).
 - [`skills/COLAB_SKILL.md`](skills/COLAB_SKILL.md) — bundled Colab CLI command reference (`colab skill`).
 - [`scripts/push_drive.sh`](scripts/push_drive.sh) / [`scripts/sync.sh`](scripts/sync.sh) — artifact → Drive and commit+sync helpers.

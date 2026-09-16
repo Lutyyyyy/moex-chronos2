@@ -385,8 +385,8 @@ gates in §8 fire green); here is what that study is and where to read it.
 
 **Master plan:** [`exp_plan.md`](exp_plan.md). **Design decisions:**
 [`wiki.md`](wiki.md). **Live status:** [`current_state.md`](current_state.md).
-**Code:** [`basic_cells.ipynb`](basic_cells.ipynb) driven by
-[`runner.ipynb`](runner.ipynb) over per-stage [`configs/*.yaml`](configs/).
+**Code:** [`basic_cells.ipynb`](../path_a/basic_cells.ipynb) driven by
+[`runner.ipynb`](../path_a/runner.ipynb) over per-stage [`configs/*.yaml`](../path_a/configs/).
 
 ### 6.1 Setup
 

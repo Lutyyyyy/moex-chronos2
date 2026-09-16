@@ -2,11 +2,15 @@
 
 Master plan for the full-scale predictability study. **Path A first** (zero-shot weights from the box). Path B (AutoGluon fine-tune) is sketched at the bottom and detailed once Path A has produced a reproducible baseline.
 
+> **Pivoted 2026-09-17**: §3 below (the original numbered-stage sequence) is retired after
+> Stage 2b's clean negative result. Current plan is §3b (gated phases A–D). §0–2 (statistical
+> framing, universe, pipeline mechanics) still apply to the new plan unchanged.
+
 Companion files:
-- `basic_cells.ipynb` — reusable code blocks (cells are not invented per stage, they are copied/imported from here).
-- `runner.ipynb` — single universal notebook; reads `configs/stage_X.yaml` and runs that stage end-to-end.
-- `configs/stage_X.yaml` — per-stage knobs (universe, interval, walk-forward, covariates, output paths).
-- `scratchpads/stage_X_scratch_pad.md` — running log per stage (what was run, observed deltas, anomalies, next tweak).
+- `basic_cells.ipynb` — reusable code blocks (cells are not invented per run, they are copied/imported from here).
+- `runner.ipynb` — single universal notebook; reads one config YAML and runs it end-to-end.
+- `configs/phase_<letter>_<name>.yaml` — per-run knobs (universe, interval, walk-forward, covariates, output paths). Currently empty — written as each phase starts.
+- `scratchpads/*.md` — running log per run (what was run, observed deltas, anomalies, next tweak).
 
 ---
 
@@ -77,16 +81,23 @@ Cache key: `{secid}_{engine}_{market}_{interval}_{date_from}_{date_till}.parquet
 6. **Metric pass.** After the loop, compute per (ticker, horizon) DA, Pearson/Spearman corr, |pred|/|true|, q10–q90 coverage, baselines DA/corr. Aggregate to stage-level table + plots.
 
 ### Path B — AutoGluon fine-tune (deferred)
-Skeleton in `moex_chronos2_pipeline.ipynb` §7. Reuses Path A's cache and panel build verbatim. Fine-tune cell is parameterised by the same YAML config — adding `path_b.fine_tune.*` knobs is mechanical once Path A produces a clean baseline. Path B is scheduled after stage 7 of Path A.
+Skeleton in `path_a/archive/legacy_notebooks/moex_chronos2_pipeline.ipynb` §7. Reuses Path A's cache and panel build verbatim. Fine-tune cell is parameterised by the same YAML config — adding `path_b.fine_tune.*` knobs is mechanical once Path A produces a clean baseline. Path B is scheduled after stage 7 of Path A.
 
 ---
 
-## 3. Path A — stage-by-stage plan
+## 3. Path A — stage-by-stage plan (RETIRED 2026-09-17, historical record)
+
+**This whole section describes the old linear numbered-stage plan, retired after Stage 2b's
+clean negative result triggered a project pivot.** The project is now organized around gated
+phases (A–D) instead — see §3b below for the current plan. Kept here unedited as a record of
+what was originally designed and which parts actually ran; all configs referenced below are
+archived at `path_a/archive/concluded_stages/` (see that folder's README for per-stage
+disposition — concluded vs. superseded-without-running).
 
 Each stage stores results under `runs/{stage_id}/` with: `config.yaml` snapshot, `preds/*.parquet`, `metrics.csv`, `metrics_baselines.csv`, `summary.json` (top-line numbers used in scratchpad), and `plots/*.png`. The scratchpad cites these paths and pastes the summary table.
 
-### Stage 0 — smoke (pipeline + cache validation)
-- **Config**: `configs/stage_0_smoke.yaml`
+### Stage 0 — smoke (pipeline + cache validation) ✅ concluded
+- **Config**: `archive/concluded_stages/stage_0_smoke.yaml` (concluded 2026-06-12; run output stays live at `runs/stage_0_smoke/`)
 - **Interval**: 1d
 - **Universe**: core 12
 - **Date**: 2024-01-01 → 2024-06-30 (short, fast, dense)
@@ -97,7 +108,7 @@ Each stage stores results under `runs/{stage_id}/` with: `config.yaml` snapshot,
 - **Success criterion**: Stage 1 can read Stage 0's outputs without code changes. No statistical claim is made here.
 
 ### Stage 1 — Daily, full study
-- **Config**: `configs/stage_1_daily.yaml`
+- **Config**: `archive/concluded_stages/stage_1_daily.yaml` (superseded by pivot 2026-09-17; only 1c ran)
 - **Interval**: 1d
 - **Universe**: core 12
 - **Date**: 2021-01-01 → 2026-04-30
@@ -111,8 +122,8 @@ Each stage stores results under `runs/{stage_id}/` with: `config.yaml` snapshot,
   3. Quantile calibration: how far is observed q10–q90 hit-rate from 0.8?
 - **Success criterion**: at least one (ticker, horizon) cell with DA ≥ 0.56 at p<0.05, AND Chronos beats B1 persistence on aggregate DA across the core 12.
 
-### Stage 2 — 60-minute, full study
-- **Config**: `configs/stage_2_60m.yaml`
+### Stage 2 — 60-minute, full study ✅ concluded
+- **Config**: `archive/concluded_stages/stage_2_60m.yaml` (concluded, clean negative result — DA≈0.485, 0/48 BH-significant cells, Pearson≈0; triggered the project pivot, see `current_state.md` session entry 14; run output at `runs/stage_2b_60m_ctx600/`)
 - **Interval**: 60m
 - **Universe**: core 12
 - **Date**: 2023-01-01 → 2026-04-30 (~3 yrs intraday)
@@ -124,7 +135,7 @@ Each stage stores results under `runs/{stage_id}/` with: `config.yaml` snapshot,
 - **Success criterion**: aggregate DA at h=2 ≥ 0.53 with bootstrap 95% CI lower bound > 0.50.
 
 ### Stage 3 — 10-minute, full study
-- **Config**: `configs/stage_3_10m.yaml`
+- **Config**: `archive/concluded_stages/stage_3_10m.yaml` (never run; superseded by pivot 2026-09-17)
 - **Interval**: 10m — finest native ISS intraday bar (ISS exposes no 15m candle; confirmed against the ISS `durations` table and per-market `candleborders`). 10m is served for shares, indexes and FORTS.
 - **Universe**: core 12 (drop any ticker with > 5% missing 10m bars after ffill — flagged at load)
 - **Date**: 2024-05-01 → 2026-04-30 (10m has depth back to 2011-12-08, so the window is a *choice* — kept aligned with the 60m study; widen if more intraday windows are needed. ~53 bars/session at 10m vs ~35 at 15m, so window counts are higher for the same calendar span.)
@@ -136,14 +147,14 @@ Each stage stores results under `runs/{stage_id}/` with: `config.yaml` snapshot,
 - **Success criterion**: aggregate DA at h ∈ {2, 3} statistically distinguishable from 0.5 (bootstrap CI) on the core 12.
 
 ### Stage 4 — Sector groups
-- **Config**: `configs/stage_4_sector.yaml`
+- **Config**: `archive/concluded_stages/stage_4_sector.yaml` (never run; superseded by pivot 2026-09-17)
 - **Interval**: chosen as the best from stages 1–3
 - **Universe**: three sub-runs — oil/gas, metals, financials (groups defined in §1)
 - **Goal**: does group attention pay off more when the cross-series correlation is high (intra-sector) than when it is diluted (mixed core-12)? Metric of interest: per-ticker DA in sector group vs the same ticker's DA in the mixed core-12 baseline run.
 - **Success criterion**: at least one sector shows mean +1.5pp DA over its corresponding tickers' Stage-{1|2|3} numbers.
 
 ### Stage 5 — Covariate ablation
-- **Config**: `configs/stage_5_covariates.yaml`
+- **Config**: `archive/concluded_stages/stage_5_covariates.yaml` (never run; superseded by pivot 2026-09-17)
 - **Interval**: best from stages 1–3
 - **Universe**: core 12
 - **Sub-runs**:
@@ -156,7 +167,7 @@ Each stage stores results under `runs/{stage_id}/` with: `config.yaml` snapshot,
 - **Success criterion**: 5d beats 5a by ≥ 1pp DA on aggregate; identify whether 5b or 5c carries most of the lift; **5e − 5d ≥ +0.5pp DA** to justify promoting price levels into Stage 6/7 default.
 
 ### Stage 6 — Time-window stability
-- **Config**: `configs/stage_6_stability.yaml`
+- **Config**: `archive/concluded_stages/stage_6_stability.yaml` (never run; superseded by pivot 2026-09-17)
 - **Interval**: best from stages 1–3, best ctx + covariates from stage 5
 - **Universe**: core 12
 - **Sub-windows**: 2021-H1, 2021-H2, 2022 (war regime), 2023, 2024, 2025, 2026-YTD. Each is a separate metric block over the same walk-forward inside that window.
@@ -164,11 +175,40 @@ Each stage stores results under `runs/{stage_id}/` with: `config.yaml` snapshot,
 - **Success criterion**: ≥ 4 of 7 sub-windows clear DA > 0.5 with one-sided binomial p<0.10, and the worst sub-window does not collapse below 0.46.
 
 ### Stage 7 — Held-out consolidation
-- **Config**: `configs/stage_7_holdout.yaml`
+- **Config**: `archive/concluded_stages/stage_7_holdout.yaml` (never run; superseded by pivot 2026-09-17)
 - **Interval/ctx/covariates**: frozen from stages 1–6 best.
 - **Date**: hold-out window = last 6 months (2025-11-01 → 2026-04-30). Earlier data is allowed only as context, **no metric is computed before the hold-out cutoff** — written into the runner as a hard assertion.
 - **Goal**: one number per (ticker, horizon) for the final report. This is the headline table.
 - **Success criterion**: replicates the stage 1–3 magnitudes on the locked-down window, within the bootstrap CI.
+
+---
+
+## 3b. Path A pivot — current plan (2026-09-17)
+
+Stage 2b's clean negative result (DA≈0.485, 0/48 BH-significant cells, Pearson≈0 — see
+`current_state.md` session entry 14) retired §3 above. The project now runs on **gated
+phases** instead of a linear stage sequence:
+
+- **Phase A — universe + data.** Expand the ticker universe via `algo_data`'s
+  `rank_equity_universe()` (506 TQBR candidates → 80 selected, done 2026-09-17) and ingest
+  through `path_a`'s new `load_from_algopack` adapter + `min_ticker_coverage` guard. **Done.**
+- **Phase B — multivariate-vs-univariate gate.** Does grouping many series for Chronos-2 to
+  forecast jointly beat forecasting each independently, on a ~20-25 ticker stratified
+  subsample? Pre-registered stopping rule: paired McNemar test on directional hit/miss,
+  BH-corrected across cells; gate passes iff ΔDA > 0 AND ≥1 BH-significant cell favoring
+  multivariate AND multivariate still beats baselines. **Gate fails → Phase C not funded,
+  write up as a negative result, stop.** Not started.
+- **Phase C — lead-lag screening (gated on B).** Discovery-vs-confirmation time split;
+  pairwise lagged cross-correlation of returns on the discovery window only; BH-corrected
+  shortlist; confirmation-only evaluation via `run_stage` with `metric_window` finally
+  enforced (closes the gap noted in `current_state.md`'s Known gaps). Not started.
+- **Phase D — stretch backtest (gated on B or C).** Toy, explicitly educational framing. Not
+  designed yet.
+
+New configs use `phase_<letter>_<name>.yaml` naming (e.g. `phase_b_multivariate.yaml`,
+`phase_b_univariate.yaml`) — written when each phase's implementation starts, in
+`path_a/configs/` (currently empty). Full phase-by-phase design lives in the local pivot plan
+(`tmp/plans/`, not committed); this section is a pointer, not a duplicate.
 
 ---
 
