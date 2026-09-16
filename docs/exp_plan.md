@@ -192,12 +192,22 @@ phases** instead of a linear stage sequence:
 - **Phase A — universe + data.** Expand the ticker universe via `algo_data`'s
   `rank_equity_universe()` (506 TQBR candidates → 80 selected, done 2026-09-17) and ingest
   through `path_a`'s new `load_from_algopack` adapter + `min_ticker_coverage` guard. **Done.**
+  Real AlgoPack pull executed 2026-09-17 (22 tickers configured, `build_price_panel` keeps
+  ~16 after the coverage guard — 6 dropped as recent listings/redomiciliations with
+  insufficient 2020-2024 history; see `algo_data/current_state.md`).
 - **Phase B — multivariate-vs-univariate gate.** Does grouping many series for Chronos-2 to
-  forecast jointly beat forecasting each independently, on a ~20-25 ticker stratified
-  subsample? Pre-registered stopping rule: paired McNemar test on directional hit/miss,
-  BH-corrected across cells; gate passes iff ΔDA > 0 AND ≥1 BH-significant cell favoring
-  multivariate AND multivariate still beats baselines. **Gate fails → Phase C not funded,
-  write up as a negative result, stop.** Not started.
+  forecast jointly (`cross_learning=True`) beat forecasting each independently
+  (`cross_learning=False`)? Pre-registered stopping rule: paired McNemar test on directional
+  hit/miss, BH-corrected across cells; gate passes iff ΔDA > 0 AND ≥1 BH-significant cell
+  favoring multivariate AND multivariate still beats baselines. **Gate fails → Phase C not
+  funded, write up as a negative result, stop.** **Configs + code written 2026-09-17
+  (`configs/phase_b_multivariate.yaml`, `phase_b_univariate.yaml`); not yet run.**
+  `group_mode` in `basic_cells.ipynb` (cell 19, `run_walk_forward`) is a single boolean
+  threaded straight to `predict_df`'s `cross_learning` kwarg — verified against
+  `chronos-forecasting`'s installed source that this, not `id_column` grouping alone, is the
+  actual joint-attention switch; prior stages (0-2) never set it, so Stage 2b's negative
+  result is effectively a univariate baseline already. See
+  `path_a/scratchpads/phase_b_scratch_pad.md`.
 - **Phase C — lead-lag screening (gated on B).** Discovery-vs-confirmation time split;
   pairwise lagged cross-correlation of returns on the discovery window only; BH-corrected
   shortlist; confirmation-only evaluation via `run_stage` with `metric_window` finally
@@ -206,8 +216,7 @@ phases** instead of a linear stage sequence:
   designed yet.
 
 New configs use `phase_<letter>_<name>.yaml` naming (e.g. `phase_b_multivariate.yaml`,
-`phase_b_univariate.yaml`) — written when each phase's implementation starts, in
-`path_a/configs/` (currently empty). Full phase-by-phase design lives in the local pivot plan
+`phase_b_univariate.yaml`). Full phase-by-phase design lives in the local pivot plan
 (`tmp/plans/`, not committed); this section is a pointer, not a duplicate.
 
 ---

@@ -23,8 +23,9 @@ Snapshot for the next Claude instance. Picks up after the first successful Stage
 | `docs/runs_empty_futures.md` | Historical record | Raw log behind the 15m→10m intraday decision (former `runs/empty_futures.md`). |
 | `path_a/basic_cells.ipynb` | Code library | Single source of truth for reusable pipeline code (30 cells: config loader, soft prefetcher, FORTS resolver, cache-only loaders incl. AlgoPack adapter, panel + covariates, Chronos input builder, walk-forward driver, metrics, baselines, plots, `run_stage`). |
 | `path_a/runner.ipynb` | Universal runner | Mounts Drive → sources `basic_cells.ipynb` → reads one config → `run_stage(cfg_path)`. Switch stages by editing one cell. |
-| `path_a/configs/` | **Empty (2026-09-17)** | Numbered-stage scheme retired — see pivot entry 14/15 below. New configs use `phase_<letter>_<name>.yaml`, written when each phase starts; none exist yet. |
+| `path_a/configs/phase_b_{multivariate,univariate}.yaml` | **Written, not run (2026-09-17)** | Phase B gate configs — identical except `group_mode`. See entry 16 below. |
 | `path_a/scratchpads/_TEMPLATE.md` | Template | Template for future phase running notes. |
+| `path_a/scratchpads/phase_b_scratch_pad.md` | **Pending** | Phase B combined scratchpad (both arms + McNemar result + gate decision). |
 | `path_a/archive/` | **NEW (2026-09-17)** | Concluded/superseded material, kept for reference — not read by active code. `legacy_notebooks/` (`moex_chronos2_pipeline.ipynb`, `Chronos2_Roma.ipynb`), `concluded_stages/` (all `stage_0`–`stage_7` configs/scratchpads — run output stays live at `runs/`). See `archive/README.md`. |
 | `algo_data/` | **NEW (2026-09-17)** | MOEX AlgoPack extraction pipeline, sibling to `path_a/`/`path_b/`. Feeds `path_a` via `load_from_algopack`. See `algo_data/docs/usage.md`. |
 | `path_b/` | Path B | AutoGluon fine-tuning; see `path_b/README.md` and `path_b/current_state.md`. |
@@ -106,6 +107,45 @@ Snapshot for the next Claude instance. Picks up after the first successful Stage
     written yet). The table below is kept as a **historical record** of the old scheme, not a
     current plan.
 
+16. **Phase A real data pull + Phase B implementation (2026-09-17)**:
+    - **AlgoPack pull executed**: `algo_data/config.md` scoped to 22 tickers (sector-stratified
+      subsample of `equity_universe.yaml`'s 80, see `algo_data/current_state.md`),
+      `datasets: [candles]`, `candles.intervals: [1d]`. Run: 3879 requests, ~11 min, exit 0.
+      **X5 and RAGR removed from the config entirely** — both recent MOEX redomiciliations with
+      zero candle history anywhere in 2020-2024 (confirmed via 60/60 empty month-chunks each);
+      `equity_universe.yaml`'s ranker only checks recent (240+ day) history so it selected them
+      without catching this. Final panel: 22 tickers pulled, `build_price_panel`'s coverage
+      guard (`min_ticker_coverage`) drops 6 more at load time (LENT, MDMG, OZON, SMLT, VKCO,
+      YDEX — same root cause, less extreme; YDEX has only 115 bars) — verified end-to-end
+      against the real Parquet output: **16 tickers, 1302-day panel, zero gap loss** at
+      threshold 0.9. Accepted as-is (below the plan's ~20-25 ticker target) rather than
+      relaxing the threshold or hunting replacements.
+    - **`predict_df` batching resolved by reading source, not a live Colab test**: installed
+      `chronos-forecasting` locally and read `chronos/chronos2/pipeline.py` directly.
+      `predict_df`/`predict` take `cross_learning: bool = False` — this, not `id_column`
+      grouping, is the actual joint-vs-independent switch (`cross_learning=True` zeroes each
+      task's `group_id` so the batch attends to itself; `False` leaves them independent even
+      within one batched call). **Confirmed prior Path A stages (0, 1, 2) never set this
+      flag** — Stage 2b's negative result was already run in independent/univariate mode
+      despite batching all tickers into one `id_column`-keyed call.
+    - **`group_mode` implemented**: `basic_cells.ipynb` cell 5 (`load_config`) validates
+      `group_mode ∈ {univariate, multivariate}` (default `univariate`) and
+      `algopack_processed_path` presence when `data_source: algopack`; cell 9
+      (`build_prefetch_manifest`) skips queuing shares from ISS when `data_source: algopack`
+      (previously wasted ISS requests in that mode); cell 19 (`run_walk_forward`) threads
+      `group_mode` to `predict_df(..., cross_learning=(group_mode=="multivariate"))`; cell 28
+      (`run_stage`) records `group_mode` in `summary.json`. Verified with a mock-`predict_df`
+      test (three cases: univariate/multivariate/unset-default) that the kwarg arrives
+      correctly — no GPU/Colab needed for this check.
+    - **Phase B configs written**: `path_a/configs/phase_b_multivariate.yaml` /
+      `phase_b_univariate.yaml` — identical except `group_mode`, 22 tickers configured (~16
+      survive), `context_len=250` (matches Stage 1c), `covariates: full`, `data_source:
+      algopack`. Combined scratchpad `path_a/scratchpads/phase_b_scratch_pad.md` (paired-arm
+      structure, not the per-stage template, since the gate's McNemar test needs both arms
+      read together). **Not yet run** — indexes/futures still come from ISS (algo_data's
+      index/futures output isn't wired into `load_stage_inputs`) and need a fresh prefetch for
+      2020-2024, not yet cached locally.
+
 ## Stages (Path A) — retired scheme, historical record only (see entry 15)
 
 | Stage | Interval | Config | What it answers |
@@ -150,29 +190,27 @@ Snapshot for the next Claude instance. Picks up after the first successful Stage
 
 ## Suggested next session
 
-**Pivot Phase B (multivariate-vs-univariate gate)** — Phase A (universe selection + `path_a`
-ingestion adapter) is done as of 2026-09-17.
-1. Expand `algo_data/config.md`'s `tickers.shares` to a stratified subsample of the 80-ticker
-   `equity_universe.yaml` (~20-25 tickers, per the gate's cost-control design — not the full 80,
-   that's reserved for Phase C screening); scope `datasets: [candles]`, `candles.intervals: [1d]`
-   for the first pull (cheap, sufficient for the gate).
-2. Run `algo_data`'s pipeline (locally confirmed working; Colab reachability still unverified —
-   check that first if using Colab) to produce `processed/candles_1d/shares.parquet`.
-3. Write `path_a/configs/stage_8a_multivariate.yaml`/`stage_8b_univariate.yaml` with
-   `data_source: algopack`, `algopack_processed_path` pointing at that Parquet.
-4. Before writing the univariate walk-forward driver: verify against the `chronos-forecasting`
-   package (on Colab, where it's installed) whether `predict_df` truly requires N separate
-   calls for independent per-series forecasting, or has a cheaper batching path — this
-   determines Phase B's wall-clock cost and must be checked, not assumed.
-5. Add `group_mode` to `build_chronos_inputs`/`run_walk_forward` (cells 17/19); pre-registered
-   stopping rule (paired McNemar test, BH-corrected) — see the pivot plan for the exact
-   acceptance criterion.
-6. Write `path_a/configs/phase_b_multivariate.yaml` / `phase_b_univariate.yaml` once the above
-   is wired (config folder is currently empty — see session entry 15).
-
-**Note**: the old Stage 1 daily-study continuation (1a/1b/1d) is **not** carried forward — it
-belonged to the retired numbered-stage plan and was superseded by the pivot (entry 15). Phase
-B's multivariate/univariate gate replaces it as the next thing to run.
+**Run Phase B** — Phase A (data) and Phase B (code + configs) are both done as of
+2026-09-17 (session entry 16); nothing has actually executed on Colab/GPU yet.
+1. On Colab: source `basic_cells.ipynb` into `runner.ipynb`, set `CONFIG_PATH =
+   "configs/phase_b_multivariate.yaml"`, run. First run needs a fresh ISS prefetch (indexes +
+   BR/Si/GD futures chain for 2020-2024, not yet cached) before the Chronos loop starts —
+   expect this to take a while, same soft-prefetcher rate limits as before.
+2. Repeat with `configs/phase_b_univariate.yaml` (same ISS cache now warm, so this run should
+   be faster to reach the Chronos loop).
+3. Confirm `price_panel.shape` printed by `run_stage` matches the expected ~16 tickers for
+   both runs (coverage guard should drop the same 6 tickers both times — if it doesn't, that's
+   a bug, not a data difference, since both configs share the same `min_ticker_coverage`).
+4. Compute the paired McNemar test on directional hit/miss per (ticker, horizon, window) across
+   the two runs' `metrics.csv`/`preds.parquet` — not yet implemented as code, needs writing
+   (reuse cell 21's existing BH-correction pattern for the cell-family correction). Record in
+   `path_a/scratchpads/phase_b_scratch_pad.md`'s "McNemar test result" section.
+5. Apply the gate's decision rule (ΔDA > 0 AND ≥1 BH-significant cell favoring multivariate AND
+   beats baselines) and record PASS/FAIL with reasoning — do not iterate on hyperparameters to
+   chase significance if it fails; a clean negative result is a valid, useful outcome here.
+6. If PASS: begin Phase C design (discovery/confirmation split + the `metric_window`
+   enforcement fix). If FAIL: write up in this file's session log, stop — Phase C is not
+   funded per the pre-registered rule.
 
 **Carryover items** (unchanged, see Known gaps): `metric_window` enforcement (now scoped to
 Phase C), price-level covariates, Path B fine-tune wiring.

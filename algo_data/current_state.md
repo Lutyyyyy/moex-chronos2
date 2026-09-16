@@ -30,11 +30,31 @@ _Last updated: 2026-09-17 (equity universe selection added; adopted by ../moex-h
 - Docs: `docs/usage.md` (now includes §6 equity universe selection), `docs/universe.md`, `docs/universe_snapshot.md`.
 - Local env: installed `pyarrow`, `pyyaml`, `pytest`.
 
+## Session update (2026-09-17): `config.md` scoped to the Phase B gate
+
+- `tickers.shares` expanded from the original 10-ticker panel to a **24-ticker stratified
+  subsample** of `equity_universe.yaml`'s 80: GAZP, SMLT, SBER, ROSN, MTSS, LKOH, T, OZON,
+  PLZL, VTBR, YDEX, VKCO, GMKN, MAGN, X5, AFKS, MGNT, PHOR, AFLT, IRAO, FEES, MDMG, RAGR, LENT.
+  Picked as top-liquidity ticker(s) within each of 12 hand-classified sectors (oil_gas, metals,
+  financials, tech, telecom, retail, transport, utilities, chemicals, healthcare, agriculture,
+  realestate, holding) — not a flat top-24 by turnover, to avoid testing the gate only on a
+  liquidity-correlated cluster. Sector map is a manual classification, not from MOEX metadata
+  (no sector field in `universe_report()`'s output) — noted as best-effort, not verified against
+  an authoritative source.
+- `datasets` scoped from all 7 down to `[candles]`; `candles.intervals` from all 4 down to
+  `[1d]` — matches what Phase B (and Phase C's lead-lag screening) actually need for their first
+  pass; widen later if a phase needs richer covariates or finer intervals.
+- Offline test suite re-run after the config edit: 47/47 passing (config-only change, no code
+  touched).
+- Old 10-ticker/7-dataset/4-interval config kept as documented history in `config.md`'s
+  "Panel rationale" section, not deleted.
+
 ## Next steps
-1. `config.md`'s `tickers.shares` still holds the original 10-ticker hand-picked panel — expand
-   it to (a subset of) the 80-ticker `equity_universe.yaml` list before running the full
-   historical pipeline for `../moex-hack`'s Path A/B/C.
-2. User: copy `config.md` and `.env` to `MyDrive/algo_data/`, open the notebook in Colab, run all. Check that apim is reachable from Colab and how long the full run takes.
+1. Run the pipeline with the new 24-ticker/candles-1d scope to produce
+   `processed/candles_1d/shares.parquet` for Phase B. Confirm Colab↔`apim.moex.com`
+   reachability first if running there (still untested — see `needed.md` item 4); works
+   confirmed locally.
+2. Once the pull completes, hand off to `path_a/basic_cells.ipynb`'s `load_from_algopack`
+   adapter and `path_a/configs/phase_b_multivariate.yaml`/`phase_b_univariate.yaml` (not yet
+   written) with `data_source: algopack`.
 3. Answer the 🟡 items in `needed.md`: Super Candles resampling, futures price adjustment, merged table for moex-hack.
-4. Connect the output to `../moex-hack` — see `path_a/basic_cells.ipynb`'s `load_from_algopack`
-   adapter (Phase A4 of the pivot plan) for the ingestion shape it expects.
