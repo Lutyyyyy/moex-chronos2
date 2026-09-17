@@ -455,4 +455,3 @@ A modification is legitimate when it tests a substantively different, pre-specif
 on untouched data—for example, changing from persistent daily correlation to event-conditioned
 1-hour diffusion. A modification is not legitimate when it merely searches more thresholds,
 windows, covariates, or metrics until the same test becomes significant.
-
