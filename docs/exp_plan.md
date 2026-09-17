@@ -298,6 +298,19 @@ phases** instead of a linear stage sequence:
     pairwise lead-lag) now agree: no detectable structure in zero-shot Chronos-2 on this
     universe. Full result table and interpretation in
     `path_a/scratchpads/phase_c_1h_scratch_pad.md`.
+    **Univariate-with-covariates companion arm (2026-09-17)**: does Chronos extract any
+    signal through the covariate panel alone (`group_mode: univariate`, `covariates: full`,
+    no cross-ticker attention), on the same 16 tickers the lead-lag screen flagged?
+    `configs/phase_c_leadlag_1h_confirm_univariate.yaml`, identical to the multivariate
+    confirm config except `group_mode`. Result: chance-level, statistically indistinguishable
+    from multivariate (DA 0.4918 vs 0.4936, mean Pearson -0.0282 vs -0.0230, 0/16
+    significant cells in both). Mean per-cell DA diff across 64 (ticker, horizon) cells:
+    -0.0004 — no consistent benefit either direction; the two largest cells favoring
+    univariate (SBER/SBERP at h=1, +0.03-0.04 DA uncorrected) are within the noise scale
+    expected from 64 uncorrected comparisons. Stronger than Phase B's original null (which
+    used a sector-stratified sample, not tickers chosen for showing correlation): confirms
+    covariates aren't rescuing signal even on tickers specifically selected for having shown
+    pairwise structure in discovery.
 - **Phase D — stretch backtest (gated on B or C). NOT FUNDED — both gating conditions
   failed/not attempted.** Toy, explicitly educational framing. Not
   designed yet.

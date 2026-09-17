@@ -367,6 +367,30 @@ Snapshot for the next Claude instance. Picks up after the first successful Stage
     planned Path A work (entry 21's "1 and 2" — writeup + 1h/metrics follow-ons); next
     is designing Phase E (entry 22), which now has a fourth full-sample null as prior
     evidence for why a stationarity assumption is worth questioning.
+24. **Univariate-with-covariates companion arm + AutoGluon `feature_importance()` scoped
+    and deferred (2026-09-17)**: user asked whether Chronos's covariate channel alone
+    (no cross-ticker attention) picks up any of what the lead-lag screen found, and
+    separately whether AutoGluon's `feature_importance()` (verified this requires a
+    *fitted* AutoGluon `TimeSeriesPredictor` — not available in the zero-shot
+    `chronos-forecasting` package used throughout Path A, which has no covariate-ablation
+    API of its own) was worth using. Investigated `path_b/` (a substantial pre-existing
+    AutoGluon fine-tuning module, last touched 2026-06-14: Colab-GPU-only, daily-validated,
+    60m/10m broken on an intraday index bug) and confirmed `feature_importance()` would
+    require standing that module back up, not a quick add-on — user chose to defer it and
+    stick with tools already in hand.
+    - Ran `configs/phase_c_leadlag_1h_confirm_univariate.yaml` (identical to the
+      multivariate confirm config except `group_mode: univariate`, same 16 tickers/dates/
+      covariates). Result: chance-level, statistically indistinguishable from multivariate
+      (DA 0.4918 vs 0.4936, mean Pearson -0.0282 vs -0.0230, 0/16 significant cells in
+      both arms). Mean per-cell DA diff across 64 cells: -0.0004. Two cells favoring
+      univariate (SBER/SBERP h=1, +0.03-0.04 DA uncorrected) are within the noise scale
+      expected from 64 uncorrected comparisons, not evidence of a real effect.
+    - Slightly stronger null than Phase B's original univariate result: Phase B's 16
+      tickers were a sector-stratified sample chosen for coverage; this arm reused the
+      same 16 tickers Phase C's own screen flagged as correlated, so it's a direct test of
+      whether covariates capture any fragment of what drove that correlation — they don't.
+    - Full writeup in `path_a/scratchpads/phase_c_1h_scratch_pad.md` ("Companion arm —
+      univariate with covariates" section).
 
 ## Stages (Path A) — retired scheme, historical record only (see entry 15)
 

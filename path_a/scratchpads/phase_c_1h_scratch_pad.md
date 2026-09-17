@@ -171,16 +171,66 @@ Chronos result — both independently land at "no signal."
   in zero-shot Chronos-2 forecasts on this universe, at these frequencies,
   over this sample period.
 
+## Companion arm — univariate with covariates (2026-09-17)
+
+**Question**: does Chronos-2 extract any of what made these 16 tickers show
+pairwise correlation in discovery through the covariate panel alone
+(`group_mode: univariate`, `cross_learning=False`, `covariates: full` — no
+direct cross-ticker attention), rather than through the multivariate
+mechanism that just failed? Raised by the user after seeing the multivariate
+confirmation result. Not redundant with Phase B's univariate arm: Phase B's
+16 tickers were a sector-stratified sample chosen for coverage, not for any
+known pairwise relationship; this arm reuses the *same* 16 tickers Phase C's
+own screen flagged as correlated, so it's a real test of whether the
+covariate channel captures any fragment of what drove that correlation.
+
+Config: `configs/phase_c_leadlag_1h_confirm_univariate.yaml` — identical to
+`phase_c_leadlag_1h_confirm.yaml` in every field except `group_mode`
+(`multivariate`→`univariate`) and `stage_id`/`notes`. Same 16 tickers, same
+confirmation window (2024-05-27→2024-12-30), same covariates, same
+`context_len`/`max_windows`.
+
+**Result**: also chance-level, statistically indistinguishable from the
+multivariate arm.
+
+| | multivariate | univariate+covariates |
+|---|---|---|
+| mean DA (primary horizons) | 0.4936 | 0.4918 |
+| mean Pearson (primary horizons) | -0.0230 | -0.0282 |
+| cells_signif_05 | 0/16 | 0/16 |
+| mean coverage | 0.783 | 0.783 |
+
+Per-(ticker, horizon) DA diff (univariate − multivariate) across all 64
+cells: **mean = -0.0004**, i.e. no consistent benefit either direction. Two
+cells (SBER h=1: +0.0375, SBERP h=1: +0.0300) show the largest gaps
+favoring univariate, but this is exactly the scale of uncorrected noise
+expected from 64 comparisons — same interpretation logic as the
+per-pair BH correction elsewhere in this project: an isolated uncorrected
+bump this size is not evidence without correction, and no cell survives
+`p_binom_bh<0.05` in either arm's own metrics.csv.
+
+**Conclusion**: covariates alone (without cross-ticker attention) do not
+rescue the signal either. This closes the specific question raised — the
+covariate channel and the multivariate-attention channel both independently
+land at the same chance-level result on the same 16 tickers, same window.
+Not just "no difference between arms" (which Phase B already showed on a
+different ticker sample) but "no difference *and* both arms are null on
+tickers specifically chosen for having shown pairwise correlation" — a
+slightly stronger statement than Phase B's original null.
+
 ## Next steps
 1. ~~Run confirmation~~ done.
 2. ~~Compute the per-pair confirmation test~~ done, 0/13 PASS.
-3. Update `docs/exp_plan.md` §3b and `docs/current_state.md` with the final
-   1h verdict (fourth negative result).
-4. Per the user's prior sequencing decision: this closes out "all
+3. ~~Run univariate-with-covariates companion arm~~ done, also null,
+   indistinguishable from multivariate.
+4. Update `docs/exp_plan.md` §3b and `docs/current_state.md` with the final
+   1h verdict (fourth negative result) and the univariate companion result.
+5. Per the user's prior sequencing decision: this closes out "all
    currently planned work" (the 1h follow-on was the last queued item
    before Phase E). Next is designing Phase E (burst-detection lead-lag),
    already queued in `docs/current_state.md` session entry 22 — proceeds
    regardless of this outcome per that entry's explicit sequencing, but
    this result is itself a relevant prior for that design: daily and 1h
-   full-sample screens both find nothing, which is exactly the
-   "stationarity assumption" this new hypothesis questions.
+   full-sample screens both find nothing (multivariate or univariate),
+   which is exactly the "stationarity assumption" this new hypothesis
+   questions.
