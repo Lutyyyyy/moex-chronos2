@@ -50,12 +50,17 @@ def router(path, params):
     raise AssertionError(f"unexpected path {path}")
 
 
+def fake_dividends_fetcher(url):
+    import json
+    return json.dumps([{"uid": "SBER", "df": [{"day": "2024-03-14", "dividend": 5.0}]}]).encode()
+
+
 def test_run_end_to_end_and_resume(tmp_path, make_client):
     (tmp_path / "config.md").write_text(CONFIG)
     cfg = ap.load_config(tmp_path / "config.md")
     client, session = make_client(router)
 
-    summary = ap.run(cfg, client=client)
+    summary = ap.run(cfg, client=client, dividends_fetcher=fake_dividends_fetcher)
     assert set(zip(summary.dataset, summary.group)) == {
         ("candles", "shares"), ("candles", "futures"), ("tradestats", "shares"), ("tradestats", "futures"), ("futoi", "futures")}
 
@@ -65,6 +70,13 @@ def test_run_end_to_end_and_resume(tmp_path, make_client):
     assert fut.loc[fut["roll"], "timestamp"].dt.date.tolist() == [date(2024, 3, 18)]
     assert set(fut.loc[fut.contract == "SiM4", "close"]) == {2000}
 
+    shares = pd.read_parquet(cfg.output_root / "processed" / "candles_1d" / "shares.parquet")
+    assert "close_adj" in shares.columns
+    before = shares[shares["timestamp"].dt.date < date(2024, 3, 14)]
+    assert (before["close_adj"] < before["close"]).all()          # ex-div day 03-14: prior prices scaled down
+    on_or_after = shares[shares["timestamp"].dt.date >= date(2024, 3, 14)]
+    assert (on_or_after["close_adj"] == on_or_after["close"]).all()
+
     ts = pd.read_parquet(cfg.output_root / "processed" / "tradestats" / "shares.parquet")
     assert ts["timestamp"].iloc[0] == pd.Timestamp("2024-03-11 10:00", tz=ap.TZ)
 
@@ -72,7 +84,7 @@ def test_run_end_to_end_and_resume(tmp_path, make_client):
     assert len(oi) == 12 and {"pos_fiz", "pos_yur"} <= set(oi.columns)   # 12 calendar days, one snapshot each
 
     session.calls.clear()
-    ap.run(cfg, client=client)
+    ap.run(cfg, client=client, dividends_fetcher=fake_dividends_fetcher)
     assert session.calls == []                                           # everything cached (past months, past years)
 
 

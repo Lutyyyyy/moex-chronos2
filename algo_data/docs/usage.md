@@ -70,6 +70,7 @@ Dataset availability by group:
 
 ## 4. Column semantics
 - **candles**: `open high low close volume value`. `timestamp` = candle **open** time. Futures candles have `value = 0` (ISS does not fill it); CNYRUB_TOM has empty `volume`/`value`.
+  - `candles/shares` also gets a `close_adj` column: `close` adjusted for cash dividends (backward-multiplicative — prices strictly before each ex-date are scaled by `1 - dividend/close_prev`, composing across multiple dividends) and known stock splits (`KNOWN_SPLITS` in `src/algopack_pipeline.py`, currently just BELU's 2024-05-24 8-for-1 — manually verified, not auto-detected). Dividend data comes from poptimizer's community-maintained dump (`https://raw.githubusercontent.com/WLM1ke/poptimizer/master/dump/dividends.json`, 142 tickers, cached at `data/dividends.json`), since MOEX ISS has no free dividend endpoint. `open/high/low/close/volume/value` are left untouched (raw); only `close_adj` is adjusted, so existing consumers of `close` are unaffected. 23/80 universe tickers have no dividend record in the dump — not individually verified as "genuinely pays no dividends" vs. "absent from this source."
 - **tradestats / orderstats / obstats** (Super Candles):
   - `timestamp` = **bar start**. ALGOPACK's `tradetime` is the bar end and is shifted by −5 min, so it aligns with candles.
   - Field lists differ by market (e.g. `obstats` eq has `spread_bbo…`, fx/fo have `mid_price, spread_l1…`).

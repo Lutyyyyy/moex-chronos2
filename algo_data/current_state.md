@@ -116,15 +116,117 @@ _Last updated: 2026-09-17 (equity universe selection added; adopted by ../moex-h
   quick add-on. Not yet run as of this entry.
 - Offline test suite re-run after the config edit: 47/47 passing (config-only change).
 
+## Session update (2026-09-17): dividend/split price adjustment (`close_adj`)
+
+- Triggered by a data-quality question during the 10m pull follow-on: neither this pipeline
+  nor `../moex-hack`'s `path_a` ever adjusted prices for dividends or splits — all prior
+  results (Stage 2b, Phase B, Phase C daily+1h, Phase E daily+1h) were computed on raw
+  close-to-close returns. Confirmed via direct scan this is real: MTSS shows clean
+  dividend-sized drops (e.g. -34.29 on 2023-06-29), BELU shows an unmissable ~8x single-day
+  move (2024-05-24) that is a confirmed 8-for-1 split, not a data error.
+- **MOEX ISS has no free dividend endpoint** — `securities/{secid}/dividends.json` is
+  empty/broken for anonymous access; the only working ISS route
+  (`iss/cci/corp-actions/dividends`) is subscriber-only. Neither `apimoex` nor `moexalgo`
+  implement dividend fetching. Verified via dedicated research.
+- **Data source**: `poptimizer`'s community-maintained dump,
+  `https://raw.githubusercontent.com/WLM1ke/poptimizer/master/dump/dividends.json` (142
+  tickers, `{uid, df: [{day, dividend}]}`). Cross-checked against independently-verified MTSS
+  and GAZP dividend facts — exact match. Covers cash dividends only, not splits; 23/80
+  universe tickers have no record (not yet individually verified as "no dividends" vs.
+  "absent from this source").
+- **Implementation** (`src/algopack_pipeline.py`):
+  - `fetch_dividends(cfg, fetcher=None)` downloads and caches the dump at
+    `<output_root>/dividends.json` (gitignored under `data/`, same convention as
+    `equity_universe.yaml` — regenerable via code, not committed). `fetcher` is injectable so
+    offline tests never touch the network.
+  - `KNOWN_SPLITS` — a small manually-verified dict (currently just BELU, 2024-05-24, 8-for-1)
+    rather than automatic statistical detection; user's explicit choice, given the
+    false-positive risk of auto-detecting splits from large-move scans.
+  - `compute_close_adj(close, timestamp, ticker, dividends)` — standard backward-multiplicative
+    total-return adjustment: prices strictly before each ex-date (dividend's `day` field, taken
+    at face value — already validated against ground truth) are scaled by
+    `1 - dividend/close_prev`; splits applied the same way with factor `1/ratio`. Multiple
+    events compose correctly (order-independent, since each scales only the prefix before its
+    own ex-date).
+  - Wired into `finalize()`/`build_processed()`: for `dataset == "candles", group == "shares"`,
+    adds a new **additive** `close_adj` column. `open/high/low/close/volume/value` are left
+    untouched — **all prior results remain exactly as computed**, since nothing previously
+    read a `close_adj` column. User's explicit design choice: adjustment lives in `algo_data`
+    (this repo), not in `../moex-hack/path_a` — processed parquet files are already adjusted
+    before Path A ever sees them.
+  - Applied **going forward only** — no retroactive re-run of Stage 2b/Phase B/C/E's already-
+    committed results (user's explicit choice).
+- Tests: new `tests/test_dividends.py` (5 tests — single dividend, composing multiple
+  dividends, ignoring other tickers/implausible dividends, known-split application, fetch
+  caching/no-refetch). `test_pipeline_offline.py`'s end-to-end test extended to assert
+  `close_adj` appears and is correctly scaled, using an injected fake fetcher (stays offline).
+  50/50 offline tests passing (45 prior + 5 new). `tools/build_notebook.py` re-run — notebook
+  regenerated and current.
+- Docs: `docs/usage.md` §4 documents the new `close_adj` column, its method, and the 23/80
+  coverage gap.
+
+## Session update (2026-09-17): real-data verification of the dividend/split adjustment
+
+- Fetched the real poptimizer dump through the actual pipeline function (`fetch_dividends()`,
+  not the earlier manually-placed scratch file) — `data/dividends.json` now exists as a real,
+  pipeline-managed cache (1180 dividend rows, 142 tickers).
+- Spot-checked BELU and MTSS directly against their real raw daily chunks (not synthetic test
+  fixtures). **Found and fixed a real bug**: `KNOWN_SPLITS`'s BELU date was wrong
+  (2024-05-24 — BELU's price is smooth through that entire week, no discontinuity at all). The
+  real ~8x drop is on **2024-08-22** (4680→714, ratio 6.55, consistent with the previously
+  confirmed 8-for-1 split). Corrected `KNOWN_SPLITS["BELU"]` and the test that encoded the same
+  wrong date; full suite re-verified (50/50 passing), notebook rebuilt.
+- Re-verified after the fix: BELU's 2024-08-22 raw return -84.7% now shows as +22.1%
+  post-adjustment (a real post-split move, not an artifact). MTSS's two known dividends
+  (2023-06-29, 2024-07-16) both correctly smoothed.
+- Ran a broader scan across all 80 tickers with raw daily chunks: computed market-relative
+  excess return (`ticker's close_adj return − that day's cross-sectional mean`) post-adjustment,
+  flagged |excess| > 0.15. **159 (ticker, date) flags across 43 tickers remain.** Inspected the
+  top of this list: dominated by well-known genuine market-wide events (2022-02-24 invasion
+  crash, 2022-03-28/29/31 post-trading-halt reopening) — not artifacts. BELU's Feb–Mar 2021
+  cluster (7 entries in the top 30) looked initially suspicious but on closer inspection is a
+  smooth multi-week speculative run-up (1681→6204 over ~3 weeks, gradual, not a single-day
+  discontinuity) — inconsistent with a split/dividend, more likely a real low-liquidity
+  newly-listed-stock bubble (BELU IPO'd on MOEX in 2021).
+- **Decision (discussed with the user): stop here, treat the remaining 159 flags as
+  informational, not investigate further.** Rationale: the two known real artifact types
+  (BELU's split, dividend-driven single-day drops) are now confirmed fixed via real-data
+  checks; the residual list is dominated by identifiable genuine market events, and further
+  per-ticker verification would need external news/corporate-action research beyond what's
+  available from price data alone — diminishing returns vs. the two bugs actually caught.
+  Full flagged list saved to session scratchpad (not part of the repo) for reference if this
+  needs revisiting later.
+- **State at end of this entry**: `close_adj` code is verified correct against real data for
+  the two known cases and the pipeline-managed dividend cache is real. **The actual processed
+  parquet files on disk do NOT have `close_adj` yet** — `data/processed/candles_1d/shares.parquet`
+  was built before this feature existed and needs a real pipeline run (`ap.run`) to be rebuilt.
+  Per the project's execution-mode convention, the user runs this, not this session.
+
+## Session update (2026-09-17): processed files rebuilt with `close_adj` (real run)
+
+- User ran `ap.run("config.md", build_only=True)` — rebuilt all 12 processed files purely from
+  the existing raw month-chunk cache (15,840/15,840 chunks cached, 0 fetched, no network
+  requests). Completed in ~15s.
+- Verified directly against the rebuilt files (not just raw chunks): `close_adj` present with
+  **zero nulls** across `candles_1d/1h/10m/shares.parquet` (80,133 / 1,013,140 / 5,502,349 rows,
+  76 tickers each — 4 of the 80-ticker universe still have no candle history, same as before).
+  BELU's 2024-08-22 split and MTSS's 2023-06-29 dividend both confirmed correctly smoothed in
+  the real files, matching the earlier raw-chunk spot-check exactly.
+- **`close_adj` is now live and ready to use** in `data/processed/candles_{1d,1h,10m}/shares.parquet`.
+  `path_a` still needs to be wired to read `close_adj` instead of raw `close` — not done yet.
+
 ## Next steps
 1. Run the pipeline with the widened `[1d, 1h, 10m]` interval scope to produce
    `processed/candles_10m/shares.parquet` alongside the existing daily/1h ones. Existing 1d/1h
    raw month-chunk cache and processed output are untouched (interval-scoped, not overwritten);
    only 10m chunks are new fetches. Expect ~2.5 hours given the per-month page-count increase.
+   **Now also produces `close_adj` for shares** — first real use of the new adjustment step.
 2. Check the 10m pull's actual ticker coverage before trusting it — same caveat as daily/1h
    (some of the 80 may have insufficient/gappy 10m history even where daily/1h history was
    fine).
 3. Hand off to `path_a/basic_cells.ipynb`/`runner.ipynb` for the 10m aggregate (Phase B-style
    multivariate-vs-univariate) test — the user's chosen first step, cheaper than a full
-   Phase C/E-style screen at 10m's much larger candidate/test-family scale.
+   Phase C/E-style screen at 10m's much larger candidate/test-family scale. Should consume
+   `close_adj`, not raw `close`, once `path_a` is wired to read it (not yet done as of this
+   entry — `load_from_algopack` still only reads the original raw OHLCV columns).
 4. Answer the 🟡 items in `needed.md`: Super Candles resampling, futures price adjustment, merged table for moex-hack.

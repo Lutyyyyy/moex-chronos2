@@ -548,7 +548,71 @@ def fetch_task(client: Client, t: Task) -> pd.DataFrame:
     return fetch_datashop(client, t.dataset, t.group, t.symbol, t.month, t.month_end)
 
 
-def finalize(df: pd.DataFrame, dataset: str, cfg: Config, windows: dict) -> pd.DataFrame:
+DIVIDENDS_URL = "https://raw.githubusercontent.com/WLM1ke/poptimizer/master/dump/dividends.json"
+
+# Manually verified stock splits (not present in the poptimizer dividend dump, which covers
+# cash dividends only). Add entries here as new splits are found; see docs/usage.md for the
+# isolated-large-move detection method used to find candidates.
+# ratio: 1 pre-split share -> `ratio` post-split shares. BELU: confirmed 8-for-1; date corrected
+# 2026-09-17 to 2024-08-22 after a real-data spot-check found the previously recorded
+# 2024-05-24 date has no price discontinuity at all (BELU trades smoothly 5848->5627 that
+# week) -- the actual ~6.55x drop (4680 -> 714) is on 2024-08-22.
+KNOWN_SPLITS = {
+    "BELU": [{"date": date(2024, 8, 22), "ratio": 8.0}],
+}
+
+
+def fetch_dividends(cfg: Config, fetcher=None) -> pd.DataFrame:
+    """Download (or load cached) per-ticker dividend history from poptimizer's community dump.
+    Returns columns: ticker, ex_date, dividend. Cached under <output_root>/dividends.json.
+    `fetcher(url) -> bytes` defaults to a plain `requests.get`; tests inject a fake to stay offline."""
+    cache = cfg.output_root / "dividends.json"
+    if not cache.exists():
+        log.info(f"fetching dividend dump from {DIVIDENDS_URL}")
+        fetcher = fetcher or (lambda url: requests.get(url, timeout=60).content)
+        content = fetcher(DIVIDENDS_URL)
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        tmp = cache.with_suffix(".tmp")
+        tmp.write_bytes(content)
+        os.replace(tmp, cache)
+    raw = json.loads(cache.read_text())
+    rows = [{"ticker": rec["uid"], "ex_date": pd.to_datetime(d["day"]).date(), "dividend": float(d["dividend"])}
+            for rec in raw for d in rec["df"]]
+    return pd.DataFrame(rows, columns=["ticker", "ex_date", "dividend"])
+
+
+def compute_close_adj(close: pd.Series, timestamp: pd.Series, ticker: str, dividends: pd.DataFrame) -> pd.Series:
+    """Backward-multiplicative adjusted close for one ticker's daily-sorted candle rows.
+    For each dividend, prices strictly before the ex-date are scaled by (1 - div/close_prev),
+    where close_prev is the last close on or before the trading day preceding ex_date. Splits
+    from KNOWN_SPLITS are applied the same way with factor 1/ratio. Adjustments compose
+    (oldest dividend/split applied last) so multiple corporate actions stack correctly."""
+    close = close.astype(float)
+    dates = timestamp.dt.date if hasattr(timestamp, "dt") else pd.Series([t.date() for t in timestamp], index=close.index)
+    adj = pd.Series(1.0, index=close.index)
+
+    events = []  # (ex_date, factor)
+    for _, row in dividends[dividends["ticker"] == ticker].iterrows():
+        prior = dates < row["ex_date"]
+        if not prior.any():
+            continue
+        close_prev = close[prior].iloc[-1]
+        if close_prev <= 0:
+            continue
+        factor = 1.0 - row["dividend"] / close_prev
+        if factor <= 0:
+            continue  # implausible (dividend >= price); skip rather than corrupt history
+        events.append((row["ex_date"], factor))
+    for split in KNOWN_SPLITS.get(ticker, []):
+        events.append((split["date"], 1.0 / split["ratio"]))
+
+    for ex_date, factor in events:
+        adj[dates < ex_date] *= factor
+    return close * adj
+
+
+def finalize(df: pd.DataFrame, dataset: str, cfg: Config, windows: dict, group: str | None = None,
+             dividends: pd.DataFrame | None = None) -> pd.DataFrame:
     """Raw chunks (already tagged with ticker/contract) → filtered, de-duplicated, pivoted, sorted table."""
     df = df.drop(columns=[c for c in ("secid", "asset_code") if c in df.columns])
     d = df["timestamp"].dt.date
@@ -579,13 +643,22 @@ def finalize(df: pd.DataFrame, dataset: str, cfg: Config, windows: dict) -> pd.D
         df = df[["ticker", "timestamp", "contract", "roll"] + [c for c in df.columns if c not in keys + ["roll"]]]
     else:
         df = df[["ticker", "timestamp"] + [c for c in df.columns if c not in keys]]
-    return _numeric(df.copy())
+    df = _numeric(df.copy())
+
+    if dataset == "candles" and group == "shares" and "close" in df.columns and dividends is not None:
+        parts = [compute_close_adj(g["close"], g["timestamp"], t, dividends)
+                 for t, g in df.groupby("ticker", sort=False)]
+        df["close_adj"] = pd.concat(parts).sort_index() if parts else pd.Series(dtype=float)
+
+    return df
 
 
-def build_processed(cfg: Config, tasks: list[Task], windows: dict) -> pd.DataFrame:
+def build_processed(cfg: Config, tasks: list[Task], windows: dict, dividends_fetcher=None) -> pd.DataFrame:
     groups: dict = {}
     for t in tasks:
         groups.setdefault((t.dataset, t.interval, t.group), []).append(t)
+    dividends = (fetch_dividends(cfg, dividends_fetcher)
+                 if ("candles", "shares") in {(ds, g) for ds, _, g in groups} else None)
     summary = []
     for (ds, iv, group), ts in groups.items():
         frames = []
@@ -601,7 +674,7 @@ def build_processed(cfg: Config, tasks: list[Task], windows: dict) -> pd.DataFra
         out = processed_path(cfg.output_root, ds, iv, group)
         if not frames:
             continue
-        df = finalize(pd.concat(frames, ignore_index=True), ds, cfg, windows)
+        df = finalize(pd.concat(frames, ignore_index=True), ds, cfg, windows, group=group, dividends=dividends)
         write_parquet(df, out)
         summary.append({"dataset": ds, "interval": iv, "group": group, "rows": len(df),
                         "tickers": df["ticker"].nunique(), "ts_min": df["timestamp"].min(),
@@ -612,7 +685,8 @@ def build_processed(cfg: Config, tasks: list[Task], windows: dict) -> pd.DataFra
     return result
 
 
-def run(config, client: Client | None = None, datasets: list | None = None, build_only: bool = False) -> pd.DataFrame:
+def run(config, client: Client | None = None, datasets: list | None = None, build_only: bool = False,
+        dividends_fetcher=None) -> pd.DataFrame:
     """Fetch missing/stale raw month chunks, then rebuild processed Parquet for the configured panel.
     Safe to re-run: completed months are skipped, so an interrupted run resumes where it stopped."""
     cfg = config if isinstance(config, Config) else load_config(config)
@@ -653,7 +727,7 @@ def run(config, client: Client | None = None, datasets: list | None = None, buil
                      f"elapsed {timedelta(seconds=int(now - t0))}, eta {timedelta(seconds=int(eta))}")
             last_report = now
 
-    summary = build_processed(cfg, tasks, windows)
+    summary = build_processed(cfg, tasks, windows, dividends_fetcher=dividends_fetcher)
     if failed:
         path = cfg.output_root / "processed" / "_failed.csv"
         path.parent.mkdir(parents=True, exist_ok=True)
