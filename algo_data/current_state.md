@@ -72,14 +72,33 @@ _Last updated: 2026-09-17 (equity universe selection added; adopted by ../moex-h
   the Phase B config change which needed no code touch) — re-confirm before relying on it if
   anything else changes alongside.
 
+## Session update (2026-09-17): `config.md` widened to `candles/1d + 1h` for the post-Phase-C 1h follow-on
+
+- Phase C (daily lead-lag screen, full pipeline) concluded — **gate FAILED**: 20
+  discovery-shortlisted pairs, 0/20 replicated out-of-sample confirmation (see
+  `../path_a/scratchpads/phase_c_scratch_pad.md`). Third independent negative result for
+  zero-shot Chronos-2 on MOEX returns (after Stage 2b and Phase B), each at daily resolution.
+- User's original intent was 1h resolution; now proceeding as a genuinely different follow-on
+  test (different frequency regime, not a retry of the same lead-lag hypothesis). Sized
+  earlier as affordable — AlgoPack's request cost is driven by month-chunks, not bar count,
+  so a 1h pull is expected to cost roughly the same order as the 80-ticker daily pull already
+  done (~24 min, 6039 requests), not proportionally more with bar count.
+- `candles.intervals` widened from `[1d]` to `[1d, 1h]`. `period` (2020-01-01..2024-12-31)
+  deliberately **not** narrowed to the ~24-month window the 1h analysis will actually use —
+  `period` applies globally across every interval in this pipeline, so narrowing it would
+  silently truncate the already-processed, already-cited `candles_1d/shares.parquet` that
+  Phase B/C's committed results are built on. The 1h analysis window is restricted on the
+  notebook side (`date_from`/`date_till` in the Chronos-side configs) instead.
+- Offline test suite re-run after the config edit: 47/47 passing (config-only change).
+
 ## Next steps
-1. Run the pipeline with the new 80-ticker/candles-1d scope to produce a fresh
-   `processed/candles_1d/shares.parquet` for Phase C's discovery step. Existing 22-ticker raw
-   month-chunk cache is reused automatically (per `config.md`'s own documented cache
-   behavior) — only the incremental 58 new tickers need fresh requests.
-2. Check the pull's actual ticker count/coverage before trusting it — some of the 80 may have
-   insufficient 2020-2024 history the same way X5/RAGR (already known) and 6 of the original
-   22 (LENT/MDMG/OZON/SMLT/VKCO/YDEX, per Phase B) did.
-3. Hand off to `path_a/basic_cells.ipynb`'s `pairwise_lagged_xcorr`/`select_pair_shortlist`
-   (Phase C2, not yet written) for the discovery-phase correlation screen.
+1. Run the pipeline with the widened `[1d, 1h]` interval scope to produce
+   `processed/candles_1h/shares.parquet` alongside the existing daily one. Existing 1d raw
+   month-chunk cache and processed output are untouched (interval-scoped, not overwritten);
+   only 1h chunks are new fetches.
+2. Check the 1h pull's actual ticker coverage before trusting it — same caveat as the daily
+   pull (some of the 80 may have insufficient/gappy 1h history even where daily history was
+   fine, since intraday listings/halts can differ from daily coverage).
+3. Hand off to `path_a/basic_cells.ipynb` for the 1h discovery/confirmation run (new configs,
+   not yet written as of this entry).
 4. Answer the 🟡 items in `needed.md`: Super Candles resampling, futures price adjustment, merged table for moex-hack.

@@ -20,7 +20,15 @@ period:
 datasets: [candles]           # scoped to Phase B gate's needs (daily candles only); widen when a later phase needs more
 
 candles:
-  intervals: [1d]              # allowed: 1m, 10m, 1h, 1d — 1d only for the first pivot-phase pull
+  # Added 1h 2026-09-17 for the post-Phase-C 1h-frequency follow-on (user's original
+  # intent, sized as affordable after Phase C's daily screen concluded -- see
+  # docs/current_state.md). period below stays at the full 2020-2024 range rather than
+  # narrowing to the ~24mo window the 1h analysis actually needs: period is applied
+  # globally across every interval (not per-interval), so narrowing it would silently
+  # truncate the already-processed, already-cited 2020-2024 candles_1d/shares.parquet
+  # that Phase B/C's results are built on. The notebook-side date_from/date_till configs
+  # restrict Chronos to the shorter 1h analysis window instead.
+  intervals: [1d, 1h]          # allowed: 1m, 10m, 1h, 1d
 
 tickers:
   # Full 80-ticker equity_universe.yaml list (see data/universe/), expanded 2026-09-17 for
@@ -56,7 +64,17 @@ overwrite: false               # true = re-download every month chunk (current m
 
 ## Panel rationale
 
-**2026-09-17 (current): Phase C lead-lag screen, full 80 tickers, candles/1d only.** All of
+**2026-09-17 (current): post-Phase-C 1h follow-on, same 80 tickers, candles/1d + 1h.** Phase C
+(daily lead-lag screen) concluded with a clean negative result — 20 discovery-shortlisted
+pairs, 0/20 replicated out-of-sample (see `../path_a/scratchpads/phase_c_scratch_pad.md`).
+User's original intent was 1h resolution from the start; sized as affordable (~similar
+request count to the daily pull, since AlgoPack's cost is driven by month-chunks not bar
+count) and added as a genuinely different follow-on test, not a Phase C retry. Same 80-ticker
+universe and full 2020-2024 `period` (kept unchanged rather than narrowed, to avoid silently
+truncating the already-processed daily parquet Phase B/C's results are built on — the
+notebook-side configs restrict the 1h analysis to a shorter ~24-month window instead).
+
+**Superseded (2026-09-17): Phase C lead-lag screen, full 80 tickers, candles/1d only.** All of
 `equity_universe.yaml`'s ranked list — Phase C's discovery step needs the widest reasonable
 universe to screen for pairwise lead-lag structure (up to 80×79/2 = 3160 pairs), unlike
 Phase B's gate which deliberately used a smaller stratified sample. `datasets`/
