@@ -344,6 +344,29 @@ Snapshot for the next Claude instance. Picks up after the first successful Stage
     - Detailed research notebook: [`transient_dependency_research.md`](transient_dependency_research.md)
       collects candidate mechanisms, event/rolling/regime experiments, covariates, metrics,
       statistical safeguards, evidence levels, and a proposed Phase E sequence.
+23. **Phase C 1h follow-on run + GATE FAILED (2026-09-17)**: user ran the widened
+    `algo_data` pull (`[1d, 1h]`, 80 tickers, full 2020-2024 period, ~49min, 9630
+    requests) — 76/80 tickers have 1h history (4 recent-IPO names lack it, expected).
+    Discovery (`runner.ipynb` §2b, `DISCOVERY_INTERVAL=60`, window
+    2023-01-02→2024-05-24): 16-ticker panel, **13 BH-significant (pair, lag, direction)
+    tests** (q<0.05), lags spread 2-5 bars with no single-lag cluster — includes two
+    same-issuer pairs (SBER↔SBERP, MTLR↔MTLRP) plus 8 cross-issuer pairs. Confirmation
+    (`configs/phase_c_leadlag_1h_confirm.yaml`, window 2024-05-27→2024-12-30, same 16
+    tickers, all survived the coverage filter): basket-wide chance-level (DA=0.494,
+    0/16 BH-significant cells). **Per-pair test (the actual pre-registered criterion)**:
+    recomputed each of the 13 hypotheses at its discovered lag on confirmation-window
+    returns, same leave-one-out residualization, BH-corrected within this 13-test
+    family (script: scratchpad, output copied to
+    `path_a/runs/phase_c_leadlag_1h_confirm/per_pair_confirmation.csv`) — **0/13 pairs
+    significant at q<0.05.** Largest survivor: SBER→VTBR r=0.059 uncorrected p=0.037,
+    p_bh=0.38 (fails). Both same-issuer pairs also failed to replicate (r≈0.001-0.02).
+    **Fourth independent negative result** (Stage 2b, Phase B, Phase C daily, now Phase
+    C 1h) — two frequencies and two test designs now agree: no detectable structure in
+    zero-shot Chronos-2 on this universe. Full tables in
+    `path_a/scratchpads/phase_c_1h_scratch_pad.md`. This closes out all currently
+    planned Path A work (entry 21's "1 and 2" — writeup + 1h/metrics follow-ons); next
+    is designing Phase E (entry 22), which now has a fourth full-sample null as prior
+    evidence for why a stationarity assumption is worth questioning.
 
 ## Stages (Path A) — retired scheme, historical record only (see entry 15)
 
@@ -393,37 +416,26 @@ Snapshot for the next Claude instance. Picks up after the first successful Stage
 
 ## Suggested next session
 
-**Phase C (daily) is fully concluded — GATE FAILED (session entries 18–20).** Third
-independent negative result (after Stage 2b and Phase B). User decided (session entry 21):
-proceed with the 1h follow-on and the quantile-loss metric work (both now scaffolded/done),
-defer the fine-tuning (Path B) decision until after seeing whether either of those turns up
-anything.
+**All currently-planned Path A work is concluded — four independent negative results**
+(Stage 2b, Phase B, Phase C daily, Phase C 1h follow-on; session entries 14/17/18-20/23).
+Quantile-loss metric work is done (entry 21). Per the user's explicit sequencing (entry 22),
+the next phase is designing **Phase E** (burst/non-stationary lead-lag detection) — detection
+only, not exploitation. Groundwork already collected in
+[`transient_dependency_research.md`](transient_dependency_research.md) (candidate mechanisms,
+experiment sketches, statistical safeguards, proposed sequence) — start there rather than
+from scratch.
 
-Quantile-loss metric work is **done** (session entry 21) — Pearson was already computed;
-pinball loss added and backfilled onto Phase B/C. Coverage is close to target in all three
-runs, so the calibration itself looks fine; the missing piece was always directional skill,
-which none of the three runs had.
+Fine-tuning (Path B) decision is still deferred — four negative results across two
+frequencies (daily, 1h) and two test designs (basket gate, pairwise lead-lag) now rule out
+"wrong metric," "wrong frequency," and "too narrow a ticker sample" as explanations, which
+strengthens the case against prioritizing fine-tuning (per the skeptical assessment in entry
+21) but the decision itself hasn't been revisited yet — worth doing once Phase E's design is
+underway, not blocking it.
 
-1h follow-on is **scaffolded, not yet run** — immediate next steps (user runs manually, same
-pattern as Phase B/C):
-1. Run the widened AlgoPack pull with `candles.intervals: [1d, 1h]` (`algo_data/config.md`,
-   already edited) — same invocation as before. Existing daily cache/output is untouched;
-   only 1h chunks are new fetches.
-2. Check the 1h pull's ticker coverage (may differ from daily's — intraday listings/halts
-   can behave differently from daily coverage).
-3. Run `runner.ipynb` §2b with `DISCOVERY_INTERVAL=60`, `DISCOVERY_FROM="2023-01-02"`,
-   `DISCOVERY_TILL="2024-05-24"` (see that cell's own comment) to get the 1h shortlist.
-4. If non-empty: fill `configs/phase_c_leadlag_1h_confirm.yaml`'s `tickers:` placeholder,
-   run confirmation (`date_from="2024-05-27"`, already set). If empty: valid, complete
-   result per the same pre-registered rule as the daily run — write up, don't loosen the
-   threshold.
-5. Report results back — will fill in a new `phase_c_1h_scratch_pad.md` (not yet created)
-   once there's something to put in it, following the same pre-registration-first pattern.
-
-If the 1h follow-on also comes back null, that's a fourth independent negative result and a
-stronger case that fine-tuning is unlikely to help either (rules out "wrong metric" and
-"wrong frequency" as explanations too) — revisit the fine-tuning decision then, per the
-reasoning in session entry 21.
+Also outstanding: the "1" from entry 21 ("I definitely want 1 and 2 to take") — a full
+writeup of all negative (and any positive) results as a standalone deliverable. Not yet
+started as its own artifact; current results live in scratchpads/docs but no consolidated
+writeup exists.
 
 **Carryover items** (unchanged, see Known gaps): price-level covariates, Path B fine-tune
 wiring.

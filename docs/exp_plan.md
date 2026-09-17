@@ -271,20 +271,33 @@ phases** instead of a linear stage sequence:
     across all three quantile columns (point forecasts, not distributional), so a
     baseline's own "pinball loss" would just be a rescaled MAE, not a real calibration
     test — interpreted jointly with `coverage` instead.
-  - **1h follow-on — scaffolded 2026-09-17, not yet run.** Genuinely different frequency
+  - **1h follow-on — ✅ concluded, GATE FAILED (2026-09-17).** Genuinely different frequency
     test (user's original intent), not a Phase C retry. `algo_data/config.md`
     `candles.intervals` widened to `[1d, 1h]` (period kept at the full 2020-2024 range to
-    avoid truncating the already-processed daily parquet — see `algo_data/current_state.md`).
-    24-month analysis window (2023-01-02→2024-12-30), ~70/30 split (365 discovery / 156
-    confirmation trading days, verified zero overlap). Discovery driver in `runner.ipynb`
-    §2b is now parameterized (`DISCOVERY_INTERVAL`/`DISCOVERY_FROM`/`DISCOVERY_TILL`) so the
-    same cell serves both daily and 1h — verified this refactor is a no-op for the daily
-    case (reproduces the exact same 20-pair/18-ticker result). New confirmation config
-    `configs/phase_c_leadlag_1h_confirm.yaml`, `context_len=250` bars kept identical to the
-    daily runs (~28 trading days lookback at 1h's 8 bars/day, deliberately not scaled up —
-    per the user's own concern that more lookback history can dilute rather than help).
-    `tickers:` placeholder pending the 1h discovery run. **User runs the 80-ticker 1h
-    AlgoPack pull, then discovery, then confirmation, manually next.**
+    avoid truncating the already-processed daily parquet — see `algo_data/current_state.md`);
+    real pull executed (76/80 tickers have 1h history, 6-9558 requests, ~49min). 24-month
+    analysis window (2023-01-02→2024-12-30), ~70/30 split (365 discovery / 156 confirmation
+    trading days, verified zero overlap). Discovery driver in `runner.ipynb` §2b
+    parameterized (`DISCOVERY_INTERVAL=60`) — same leave-one-out residualized
+    `pairwise_lagged_xcorr`/`select_pair_shortlist` as the daily run, no methodology changes.
+    **Discovery**: 16-ticker panel, 2914-2917 bars, **13 BH-significant (pair, lag,
+    direction) tests** (q<0.05, well under the top-20 cap), lags spread 2-5 bars (intraday,
+    not the daily run's multi-day story) with no single-lag dominance. Includes two
+    same-issuer ordinary/preferred pairs (SBER↔SBERP, MTLR↔MTLRP) alongside 8 cross-issuer
+    pairs. Full table in `path_a/scratchpads/phase_c_1h_scratch_pad.md`.
+    **Confirmation** (`configs/phase_c_leadlag_1h_confirm.yaml`, 16 tickers,
+    2024-05-27→2024-12-30, 1247 bars, all 16 tickers survived coverage filter): basket-wide
+    chance-level DA (0.494), 0/16 BH-significant (ticker, horizon) cells, mean Pearson
+    ≈ -0.023. **Per-pair test (the pre-registered criterion)**: recomputed each of the 13
+    hypotheses at its discovered lag on confirmation-window returns, BH-corrected within
+    this 13-test family — **0/13 pairs significant at q<0.05.** Largest surviving
+    correlation: SBER→VTBR r=0.059 (p=0.037 uncorrected, p_bh=0.38 — fails). The two
+    same-issuer pairs also failed to replicate (r≈0.001-0.02), ruling out even a mechanical
+    artifact story for those. **Fourth independent negative result** (after Stage 2b, Phase
+    B, Phase C daily) — two frequencies (daily, 1h) and two test designs (basket gate,
+    pairwise lead-lag) now agree: no detectable structure in zero-shot Chronos-2 on this
+    universe. Full result table and interpretation in
+    `path_a/scratchpads/phase_c_1h_scratch_pad.md`.
 - **Phase D — stretch backtest (gated on B or C). NOT FUNDED — both gating conditions
   failed/not attempted.** Toy, explicitly educational framing. Not
   designed yet.

@@ -37,11 +37,29 @@ date_from: "2024-05-27"
 date_till: "2024-12-30"
 
 tickers:
-  # PLACEHOLDER -- replace with the union of ticker_i/ticker_j from the 1h discovery
-  # shortlist before running. Example shape (do not use as-is):
-  # - GAZP
-  # - SBER
-  []
+  # Union of ticker_i/ticker_j from the 1h discovery shortlist (13 BH-significant
+  # (pair, lag, direction) tests, q<0.05, run 2026-09-17 -- see
+  # path_a/scratchpads/phase_c_1h_scratch_pad.md). 16 unique tickers. Includes two
+  # same-issuer ordinary/preferred pairs (SBER/SBERP, MTLR/MTLRP) flagged as possible
+  # microstructure/dual-listing artifacts rather than genuine cross-asset lead-lag --
+  # kept in for confirmation since the pre-registered rule doesn't exclude them, noted
+  # for interpretation either way.
+  - BANEP
+  - CHMF
+  - FESH
+  - HYDR
+  - MGNT
+  - MRKC
+  - MTLR
+  - MTLRP
+  - MTSS
+  - NMTP
+  - SBER
+  - SBERP
+  - SNGSP
+  - UPRO
+  - VSMO
+  - VTBR
 
 indexes:        [IMOEX, MOEXOG, MOEXMM, MOEXFN, RGBI]
 futures_proxies: [BR, Si, GD]
