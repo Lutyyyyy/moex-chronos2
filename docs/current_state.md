@@ -473,6 +473,31 @@ Snapshot for the next Claude instance. Picks up after the first successful Stage
       for this detector shape, not an execution flaw. Full writeup, including the
       exact power-calculation tradeoffs discussed with the user before running:
       `path_a/scratchpads/phase_e_scratch_pad.md`.
+27. **Phase E daily loosened re-run (v2) — clean NULL, stronger than v1
+    (2026-09-17)**: user asked to loosen the criteria and try again. Before running,
+    flagged the risk directly: since v1's 3 discovery candidates' confirmation-window
+    numbers (`same_dir_frac` ~0.42-0.48) were already known, simply loosening the floor
+    and re-checking those same 3 pairs on the same confirmation window would not be a
+    valid test — it'd be relabeling already-seen non-significant numbers as "eligible,"
+    not new evidence. User agreed to a genuinely fresh full discovery+confirmation
+    re-run with re-derived parameters instead of a floor tweak on known results.
+    - Re-derived `threshold_std=1.0` (down from v1's 1.25 — still an above-median move,
+      outer ~32% of days, not "any day at all") and floor n≥90 (up from 79, since the
+      lower threshold generates more events: ~119 expected in the 375-bar confirmation
+      window, comfortable headroom above the ~85-event power-calc minimum for a ~63%
+      target effect). Same 874/375-bar 70/30 split and lags 1-4 days as v1 — only the
+      event definition and floor changed.
+    - `runner.ipynb` §2g/§2h added (same `run_e2_discovery`/`run_e2_confirmation`
+      functions, v2 parameters).
+    - **Result: 0/11880 BH-significant at discovery** — a cleaner, more decisive null
+      than v1. Not just "v1's 3 marginal candidates dropped out under a looser bar" —
+      no new candidates emerged either, despite meaningfully more statistical power
+      (100% eligible, ~119 vs. v1's ~79 event floor) to find them if they existed.
+      Confirmation stage not reached (nothing to confirm).
+    - Daily v2 is the first daily E2 result with the same decisiveness as the 1h
+      result (a clean, adequately-powered discovery-stage null), resolving the
+      ambiguity v1 left behind. Full writeup, including the "why this counts as a
+      valid loosening and not p-hacking" reasoning: `path_a/scratchpads/phase_e_scratch_pad.md`.
 
 ## Stages (Path A) — retired scheme, historical record only (see entry 15)
 

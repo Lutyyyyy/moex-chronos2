@@ -364,11 +364,26 @@ phases** instead of a linear stage sequence:
     `run_e2_confirmation`'s `confirmed` flag wasn't checking `eligible`, so an
     ineligible pair clearing BH by chance would have been wrongly marked
     confirmed (didn't change this run's outcome, fixed before it could).
+  - **E2 (daily, v2 — loosened threshold) — done, clean NULL, stronger than v1.**
+    `runner.ipynb` §2g/§2h. User asked to loosen the criteria after seeing v1's
+    ambiguous result; flagged that re-testing v1's same 3 candidates on the same
+    confirmation window under a looser floor wouldn't be a valid test (already
+    seen those numbers) — user agreed to a genuinely fresh discovery+confirmation
+    run instead. Re-derived: threshold_std=1.0 (down from 1.25, still an
+    above-median move — outer ~32% of days, not "any day"), floor n≥90 (~119
+    expected confirmation events at this threshold, comfortable headroom above the
+    ~85-event power-calc minimum). Same 874/375-bar split and lags as v1. Result:
+    **0/11880 BH-significant at discovery** — not just "v1's 3 candidates
+    disappeared," no new candidates emerged either, despite meaningfully more
+    statistical power to find them. First clean, decisively-powered null at daily
+    resolution (v1 was ambiguous — 3 candidates that couldn't be properly tested
+    either way).
   - **Fifth independent negative result** (Stage 2b, Phase B, Phase C daily,
-    Phase C 1h, now Phase E at both resolutions). Both land at the same practical
-    conclusion (no confirmable burst structure), but the daily result is
-    structurally weaker evidence than 1h's — daily's ~5-year history can't
-    generate enough confirmation-window events for this detector shape, a real
+    Phase C 1h, Phase E daily v1/v2). All three E2 runs (1h, daily v1, daily v2)
+    land at the same practical conclusion (no confirmable burst structure); daily
+    v2 is the first daily result matching 1h's decisiveness. Structurally, daily
+    still needed a looser event threshold than 1h's — daily's ~5-year history has
+    far fewer bars per calendar day than 1h, a real
     limitation, not an execution flaw. Full writeup in
     `path_a/scratchpads/phase_e_scratch_pad.md`.
 

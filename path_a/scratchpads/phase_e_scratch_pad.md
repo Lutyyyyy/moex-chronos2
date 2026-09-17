@@ -179,6 +179,40 @@ docstring ("marked ineligible/FAIL, not dropped"). Didn't change this run's outc
 produce a false positive in a future run. Fixed by AND-ing `confirmed` with
 `eligible` explicitly.
 
+## E2 (daily, v2) — loosened threshold re-run (2026-09-17)
+
+User asked to loosen the criteria and try again, after seeing the v1 result above
+(3 discovery candidates, none confirmable — a power shortfall, not a clean null).
+Flagged before running: re-testing the SAME 3 v1 candidates on the SAME
+confirmation window with a looser floor would not be a valid test (we'd already
+seen those numbers — same_dir_frac 0.42-0.48, clearly regressing toward null). User
+agreed to a genuinely fresh run instead: new `threshold_std`, full re-derivation,
+new discovery AND new confirmation, not just re-checking known numbers under a
+looser bar.
+
+**Re-derived parameters**: `threshold_std=1.0` (down from 1.25 — still an
+above-median move, the outer ~32% of days, not "any day"), floor **n≥90** (derived
+the same way, with headroom above the exact ~85-event power-calc minimum at this
+threshold's ~119 expected confirmation-window events). Same 70/30 full-history
+split (874/375 bars) and same lags (1-4 days) as v1 — only the event definition
+and floor changed.
+
+**Discovery result**: 887 bars, 55 tickers (same panel as v1 — only the threshold
+changed), 11880 candidate tests, **100% eligible** (more headroom than v1's already
+resolvedly full 100%) — and **0/11880 BH-significant**. Not just "the 3 v1
+candidates dropped out" — nothing at all replaces them; a strictly more powerful
+test (more events, same rigor) found nothing where the weaker v1 test found 3
+marginal, unconfirmable candidates. Confirmation stage not reached — nothing to
+confirm.
+
+**This is a cleaner, more decisive negative result than v1.** v1 left a genuinely
+ambiguous finding (3 candidates that couldn't be properly tested one way or the
+other — "insufficient power," not "no effect"). v2, with meaningfully more
+statistical power and the same discipline, resolves that ambiguity: no
+event-conditioned burst structure survives even a fairer look. Both v1's 3
+candidates and any new candidates that a looser threshold might have picked up are
+absent here.
+
 ## Interpretation
 
 This is a genuinely different test from all four prior negative results — full
@@ -190,21 +224,27 @@ stationary, but occur in short bursts."
 
 - **1h**: 2σ leader-event threshold, lags 1-4 bars, ~17-month discovery window, 53
   tickers — no significant bursts found at discovery (0/11024).
-- **Daily**: 1.25σ threshold (re-derived, not copied — 2σ was infeasible at daily's
-  bar count), lags 1-4 days, full 2020-2024 history, 55 tickers — 3 candidates
-  found at discovery, but **none could be adequately re-tested in confirmation**
-  (all 3 fell below the confirmation-window event floor) and none were
-  BH-significant there either. The honest characterization is not "0/3 confirmed
-  as failed replications" but "3 discovery candidates, 0 properly testable, 0
-  significant regardless" — a weaker, less informative negative than 1h's (which
-  had a clean, well-powered null at both stages) or than Phase C's (which had
-  well-powered confirmations that cleanly failed).
-- Both resolutions land at the same practical conclusion — no confirmable
-  event-conditioned burst structure found — but the daily result is a genuinely
-  weaker piece of evidence than the 1h result, because daily's confirmation window
-  couldn't generate enough qualifying events for its own discovery candidates. This
-  is a real, structural limitation of testing this specific detector shape on daily
-  bars with only ~5 years of history, not a flaw in execution.
+- **Daily v1**: 1.25σ threshold (re-derived, not copied — 2σ was infeasible at
+  daily's bar count), lags 1-4 days, full 2020-2024 history, 55 tickers — 3
+  candidates found at discovery, but **none could be adequately re-tested in
+  confirmation** (all 3 fell below the confirmation-window event floor) and none
+  were BH-significant there either. The honest characterization was not "0/3
+  confirmed as failed replications" but "3 discovery candidates, 0 properly
+  testable, 0 significant regardless" — an ambiguous, underpowered negative.
+- **Daily v2 (loosened, 2026-09-17)**: `threshold_std=1.0`, floor n≥90 — more
+  events, more power, same 70/30 split and lags. **0/11880 significant at
+  discovery** — a strictly cleaner result than v1: not just "the 3 marginal
+  candidates disappeared," but no new candidates emerged either, despite
+  meaningfully more statistical power to find them if they existed.
+- All three runs (1h, daily v1, daily v2) land at the same practical conclusion —
+  no confirmable event-conditioned burst structure found — but daily v2 is the
+  first daily result to match 1h's decisiveness (a clean discovery-stage null with
+  adequate power, not an ambiguous underpowered one). Going from v1 to v2
+  illustrates the tradeoff directly: v1's stricter threshold (1.25σ) was more
+  economically meaningful ("real shocks only") but couldn't generate enough
+  confirmation-window events to test its own candidates; v2's looser threshold
+  (1.0σ, still an above-median move, not "any day") traded some of that economic
+  specificity for enough power to get a clean answer — and that answer was null.
 
 This does not close off the burst-detection hypothesis entirely — the research doc
 (`docs/transient_dependency_research.md`) lists several dimensions not yet
