@@ -432,6 +432,47 @@ Snapshot for the next Claude instance. Picks up after the first successful Stage
       1h, now Phase E) — and the first to test a genuinely different hypothesis shape
       (event-conditioned causal detection vs. full-sample aggregate correlation/DA).
       Full writeup: `path_a/scratchpads/phase_e_scratch_pad.md`.
+26. **Phase E daily follow-on — run, NULL result but weaker evidence than 1h
+    (2026-09-17)**: user asked to also run E2 at daily resolution. First clarified it's
+    a pandas-only statistical test (no Chronos, so "univariate/multivariate" doesn't
+    apply the way it does to Phase B/C). Then flagged that copying 1h's `threshold_std
+    =2.0`/`min_events=85` to daily wouldn't work — daily's much lower bar count
+    (~9-16 expected events per ticker over a comparable window, ~56 over the full
+    2020-2024 history) can't reach that floor. Re-derived parameters with the user via
+    AskUserQuestion at each step rather than guessing: `threshold_std=1.25` (a "notable
+    move," not a strict shock — needed to generate enough events), full 2020-2024
+    history split 70/30 (874/375 bars, own zero-overlap check), and floor **n≥79** set
+    by the CONFIRMATION window's achievable event count (the binding constraint at
+    daily resolution — confirmation's smaller bar budget, not discovery's, sets the
+    ceiling on what's testable).
+    - `runner.ipynb` §2e/§2f added (daily E2 discovery/confirmation, same
+      `run_e2_discovery`/`run_e2_confirmation` functions as 1h's §2c/§2d, different
+      parameters).
+    - **Discovery**: 55/76 tickers survived coverage, 887 bars, 11880 candidate tests,
+      100% cleared the floor. **3 BH-significant candidates** (SBER→SFIN, CHMF→ROSN,
+      SBERP→VSMO, all lag=2) — notably all showing an OPPOSITE-direction pattern
+      (`same_dir_frac` 0.28-0.31, well below the 0.50 null), not the same-direction
+      burst the floor was framed around; the two-sided binomial test caught this
+      correctly, not a bug.
+    - **Confirmation**: 0/3 confirmed, and critically **none of the 3 were even
+      eligible** for a properly powered confirmation test (44-60 confirmation-window
+      events, below the n≥79 floor) — a materially weaker outcome than "tested and
+      failed." `same_dir_frac` regressed to ~0.42-0.48 regardless (closer to null),
+      suggestive but not dispositive given the power shortfall.
+    - **Bug caught and fixed**: `run_e2_confirmation`'s `confirmed` flag was computed
+      from BH significance alone, without checking `eligible` — contradicting its own
+      docstring's promise that ineligible pairs are "marked ineligible/FAIL, not
+      dropped." Didn't change this run's outcome (nothing was BH-significant either),
+      but is a real latent bug that could have produced a false "confirmed" on a future
+      run; fixed by AND-ing `confirmed` with `eligible`. Re-verified the 1h result was
+      unaffected (still 0/11024) and `pairwise_lagged_xcorr`'s no-op regression still
+      holds after this and the earlier `residualize_market_factor` refactor.
+    - Both 1h and daily now land at the same practical conclusion (no confirmable
+      burst structure) but the daily result is honestly weaker evidence — daily's
+      ~5-year history structurally can't generate enough confirmation-window events
+      for this detector shape, not an execution flaw. Full writeup, including the
+      exact power-calculation tradeoffs discussed with the user before running:
+      `path_a/scratchpads/phase_e_scratch_pad.md`.
 
 ## Stages (Path A) — retired scheme, historical record only (see entry 15)
 

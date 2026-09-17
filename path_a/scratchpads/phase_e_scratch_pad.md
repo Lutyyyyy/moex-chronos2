@@ -16,13 +16,16 @@ experiment families, and the statistical-safeguards checklist this design follow
   `make_synthetic_panel`/`inject_burst`/`e1_power_test`/`e1_null_false_alert_rate`).
 - E1 runs automatically every time `basic_cells.ipynb` is sourced (§16's assertion
   cell) — E2's functions are not reachable without E1's assertions passing first.
-- E2 driver: `runner.ipynb` §2c (discovery) + §2d (confirmation), no config file —
-  pandas-only, no Chronos, no `run_stage`.
+- E2 driver (1h): `runner.ipynb` §2c (discovery) + §2d (confirmation).
+- E2 driver (daily): `runner.ipynb` §2e (discovery) + §2f (confirmation), same
+  mechanism, re-derived parameters (see below). All pandas-only, no Chronos, no
+  `run_stage`.
 - Started: 2026-09-17
-- Status: **done, NULL RESULT at discovery (2026-09-17)** — 0/11024 candidate
-  (leader, follower, lag) hypotheses BH-significant in the discovery window.
-  Confirmation stage not reached (nothing to confirm). Fifth independent negative
-  result (after Stage 2b, Phase B, Phase C daily, Phase C 1h).
+- Status: **done, NULL RESULT at both resolutions (2026-09-17)**. 1h: 0/11024
+  candidates significant at discovery, confirmation not reached. Daily: 3
+  candidates at discovery, 0 confirmable (all below the confirmation event floor),
+  0 significant. Fifth independent negative result (after Stage 2b, Phase B, Phase
+  C daily, Phase C 1h) — this entry covers both the 1h and daily E2 runs.
 
 ## Pre-registered design (locked in 2026-09-17, before running E2 on real data)
 
@@ -88,7 +91,7 @@ Both tests pass, run automatically on every notebook load:
   mismatch here would have either hidden a working detector (this direction) or,
   worse, hidden a broken one, if the mismatch had gone the other way.
 
-## E2 — discovery result (2026-09-17)
+## E2 (1h) — discovery result (2026-09-17)
 
 Ran `runner.ipynb` §2c on the real 1h panel, discovery window 2023-01-02→2024-05-24.
 
@@ -104,6 +107,78 @@ No confirmation run needed — nothing survived discovery to confirm. Per the
 pre-registered rule (decision 7), this is itself the complete result, not a partial
 one requiring a threshold change and re-run.
 
+## E2 (daily) — design, discovery, and confirmation result (2026-09-17)
+
+User asked to also run the daily equivalent. Daily bars needed their own re-derived
+design, not a resolution swap on the 1h parameters — a 2σ threshold gives only
+~9-16 expected events per ticker over a comparable window (or ~56 over the FULL
+2020-2024 history), far under the n≥85 floor. Re-derivation (discussed and agreed
+with the user before running):
+
+- **`threshold_std=1.25`** (vs. 1h's 2.0) — a "notable move" threshold rather than
+  a strict shock (1.25σ happens ~21% of days vs. 2σ's ~4.5%), needed to generate
+  enough events on daily's much sparser bar count.
+- **70/30 split of the FULL 2020-2024 history** (1249 bars total) rather than a
+  shorter sub-window — daily doesn't have bars to spare. Discovery
+  2020-01-03→2023-07-17 (874 bars), confirmation 2023-07-18→2024-12-30 (375 bars),
+  verified zero overlap. Not identical to Phase C's daily split (2020-01-03/
+  2023-06-30/2023-07-01/2024-12-30) — re-derived independently for this test's own
+  70/30 target, not copied.
+- **Floor n≥79**, derived via the same binomial two-proportion power calculation as
+  1h's floor (target ~66% same-direction effect, 80% power, α=0.05), but set by the
+  CONFIRMATION window's achievable event count (~79 expected at threshold_std=1.25
+  over 375 bars) rather than discovery's — confirmation is the binding constraint
+  at daily resolution (discovery gets ~185 events, comfortably above the floor;
+  confirmation does not have that same headroom, unlike 1h where both sides had
+  large margins).
+- **Lags 1-4 trading days** (not hours) — Phase C's daily economic story
+  (multi-day propagation), not 1h's intraday one.
+
+**Discovery** (`runner.ipynb` §2e): 55/76 tickers survive coverage, 887 discovery
+bars (2020-02-21→2023-07-17 — shorter than the nominal 874-bar target since
+`build_price_panel`'s inner-join trims to the intersection of all 55 tickers'
+coverage), 11880 candidate tests, 100% cleared the floor. **3 BH-significant
+hypotheses** (q<0.05):
+
+| leader | follower | lag | n_events (disc.) | same_dir_frac | p_value_bh |
+|---|---|---|---|---|---|
+| SBER | SFIN | 2 | 140 | 0.279 | 0.0019 |
+| CHMF | ROSN | 2 | 137 | 0.307 | 0.0375 |
+| SBERP | VSMO | 2 | 141 | 0.312 | 0.0375 |
+
+Notable: all 3 show `same_dir_frac` well BELOW 50% (0.28-0.31), i.e. an
+**opposite-direction** pattern (follower tends to move against the leader 2 days
+later), not the same-direction burst the floor was originally framed around. The
+binomial test is two-sided, so it correctly caught this — a real, if unexpected,
+discovery-phase pattern, not a bug.
+
+**Confirmation** (`runner.ipynb` §2f, window 2023-07-19→2024-12-30, 379 bars):
+
+| leader | follower | n_events (confirm.) | eligible | same_dir_frac | p_value_bh_confirm | confirmed |
+|---|---|---|---|---|---|---|
+| SBER | SFIN | 60 | **False** | 0.417 | 0.434 | False |
+| CHMF | ROSN | 44 | **False** | 0.477 | 0.880 | False |
+| SBERP | VSMO | 57 | **False** | 0.421 | 0.434 | False |
+
+**0/3 confirmed — and critically, none of the 3 were even eligible for a properly
+powered confirmation test** (44-60 confirmation-window events, all below the n≥79
+floor). This is a materially different and weaker outcome than "tested and failed"
+— the honest statement is "the discovery-phase pattern could not be adequately
+re-tested in the confirmation window at all," not "we tested it and it didn't
+replicate," though both `same_dir_frac` values regressing hard toward ~0.42-0.48
+(much closer to the 0.50 no-relationship value than the ~0.30 discovery-phase
+reading) is at least suggestive that the discovery pattern was not a real, stable
+effect even setting the power question aside.
+
+**Bug caught and fixed during this run**: `run_e2_confirmation`'s `confirmed` flag
+was computed purely from BH significance, without checking `eligible` — meaning a
+pair under the confirmation-window event floor that happened to clear BH by chance
+would have been incorrectly marked "confirmed," contradicting the function's own
+docstring ("marked ineligible/FAIL, not dropped"). Didn't change this run's outcome
+(none were BH-significant either), but is a real latent bug fixed before it could
+produce a false positive in a future run. Fixed by AND-ing `confirmed` with
+`eligible` explicitly.
+
 ## Interpretation
 
 This is a genuinely different test from all four prior negative results — full
@@ -111,9 +186,25 @@ event-conditioning (not aggregate correlation), causal trailing-window detection
 (not a single full-sample number), its own multiple-testing family and BH
 correction, and a validated detector (E1) rather than an assumed-correct one. It
 directly targets the hypothesis the user raised: "dependencies might not be
-stationary, but occur in short bursts." At 1h resolution, 2σ leader-event
-threshold, lags 1-4 bars, over this ~17-month discovery window, on 53 tickers: no
-such bursts were found.
+stationary, but occur in short bursts."
+
+- **1h**: 2σ leader-event threshold, lags 1-4 bars, ~17-month discovery window, 53
+  tickers — no significant bursts found at discovery (0/11024).
+- **Daily**: 1.25σ threshold (re-derived, not copied — 2σ was infeasible at daily's
+  bar count), lags 1-4 days, full 2020-2024 history, 55 tickers — 3 candidates
+  found at discovery, but **none could be adequately re-tested in confirmation**
+  (all 3 fell below the confirmation-window event floor) and none were
+  BH-significant there either. The honest characterization is not "0/3 confirmed
+  as failed replications" but "3 discovery candidates, 0 properly testable, 0
+  significant regardless" — a weaker, less informative negative than 1h's (which
+  had a clean, well-powered null at both stages) or than Phase C's (which had
+  well-powered confirmations that cleanly failed).
+- Both resolutions land at the same practical conclusion — no confirmable
+  event-conditioned burst structure found — but the daily result is a genuinely
+  weaker piece of evidence than the 1h result, because daily's confirmation window
+  couldn't generate enough qualifying events for its own discovery candidates. This
+  is a real, structural limitation of testing this specific detector shape on daily
+  bars with only ~5 years of history, not a flaw in execution.
 
 This does not close off the burst-detection hypothesis entirely — the research doc
 (`docs/transient_dependency_research.md`) lists several dimensions not yet
@@ -127,9 +218,13 @@ justification, not a retry of this exact test with a different knob.
 
 ## Next steps
 1. ~~Build E1 (synthetic validation)~~ done, both tests pass.
-2. ~~Run E2 discovery on real data~~ done, 0/11024 significant.
-3. ~~Run E2 confirmation~~ not applicable (empty discovery shortlist).
-4. Update `docs/exp_plan.md` and `docs/current_state.md` with the Phase E result.
-5. Decide with the user: write up all five negative results as the project's
+2. ~~Run E2 discovery on real 1h data~~ done, 0/11024 significant.
+3. ~~Run E2 confirmation (1h)~~ not applicable (empty discovery shortlist).
+4. ~~Run E2 discovery + confirmation on daily data (re-derived design)~~ done —
+   3 discovery candidates, 0 confirmable (all below the confirmation event floor),
+   0 significant. Caught and fixed a latent bug in `run_e2_confirmation`'s
+   `confirmed` flag (wasn't checking `eligible`) along the way.
+5. Update `docs/exp_plan.md` and `docs/current_state.md` with both results.
+6. Decide with the user: write up all five negative results as the project's
    deliverable, or design a specific, justified Phase E variant (different
    threshold/regime/resolution) with its own pre-registration.

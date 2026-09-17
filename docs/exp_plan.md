@@ -330,7 +330,7 @@ phases** instead of a linear stage sequence:
     pure-null synthetic panels) — 0/7600 BH-significant hits, well under the
     nominal 5% ceiling. Runs automatically every time `basic_cells.ipynb` is
     sourced; E2's real-data functions are unreachable without E1 passing first.
-  - **E2 (event-conditioned MVP) — done, NULL at discovery.** `runner.ipynb`
+  - **E2 (event-conditioned MVP, 1h) — done, NULL at discovery.** `runner.ipynb`
     §2c/§2d, pandas-only (no Chronos). Mechanism: leader's residualized return
     exceeds a 2σ trailing (causal) threshold → check follower's residualized
     return same-direction response `lag`∈{1,2,3,4} bars later, binomial test
@@ -343,8 +343,33 @@ phases** instead of a linear stage sequence:
     coverage guard, 2919 discovery bars, 11024 candidate (leader, follower, lag)
     tests, 100% cleared the event floor. **0/11024 BH-significant at q<0.05** —
     confirmation stage not reached (nothing to confirm), which is itself the
-    complete pre-registered result. **Fifth independent negative result**
-    (Stage 2b, Phase B, Phase C daily, Phase C 1h, now Phase E). Full writeup in
+    complete pre-registered result.
+  - **E2 (event-conditioned MVP, daily) — done, NULL, weaker evidence than 1h.**
+    `runner.ipynb` §2e/§2f. Daily bars needed re-derived parameters, not a
+    resolution swap on 1h's numbers: a 2σ threshold gives only ~9-16 events per
+    ticker over a comparable window (far under any usable floor), so
+    `threshold_std` was lowered to **1.25σ** (a "notable move," not a strict
+    shock) and the discovery/confirmation split widened to the full 2020-2024
+    history (874/375-bar 70/30 split, own zero-overlap check, not copied from
+    Phase C's daily dates). Floor **n≥79**, set by the confirmation window's
+    smaller achievable event count (the binding constraint at daily resolution,
+    unlike 1h where both sides had headroom). 55/76 tickers survived coverage,
+    887 discovery bars, 11880 candidate tests, 100% cleared the floor. **3
+    BH-significant discovery candidates** (SBER→SFIN, CHMF→ROSN, SBERP→VSMO, all
+    lag=2, all showing an unexpected OPPOSITE-direction pattern, `same_dir_frac`
+    0.28-0.31 vs. the 0.50 null). **0/3 confirmed — and none were even eligible**
+    for a properly powered confirmation test (44-60 confirmation-window events,
+    below the n≥79 floor); `same_dir_frac` regressed to ~0.42-0.48 in confirmation
+    regardless. Caught and fixed a latent bug during this run:
+    `run_e2_confirmation`'s `confirmed` flag wasn't checking `eligible`, so an
+    ineligible pair clearing BH by chance would have been wrongly marked
+    confirmed (didn't change this run's outcome, fixed before it could).
+  - **Fifth independent negative result** (Stage 2b, Phase B, Phase C daily,
+    Phase C 1h, now Phase E at both resolutions). Both land at the same practical
+    conclusion (no confirmable burst structure), but the daily result is
+    structurally weaker evidence than 1h's — daily's ~5-year history can't
+    generate enough confirmation-window events for this detector shape, a real
+    limitation, not an execution flaw. Full writeup in
     `path_a/scratchpads/phase_e_scratch_pad.md`.
 
 New configs use `phase_<letter>_<name>.yaml` naming (e.g. `phase_b_multivariate.yaml`,
