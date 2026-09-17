@@ -198,6 +198,34 @@ correctly expresses appropriate uncertainty width — but that calibration carri
 directional skill (DA≈0.484). This is a more precise statement than "DA≈0.50" alone: the
 model isn't miscalibrated or broken, it just has no directional edge to calibrate around.
 
+**Per-window clustering check (2026-09-17, added after Phase E's daily results)**: user
+asked whether Chronos's multivariate arm might have found real, "non-obvious" structure
+(complex multi-ticker combinations, not just pairwise leader-follower — the original hope
+behind trying Chronos multivariate at all) that a coarse (ticker, horizon)-aggregated DA
+number could have washed out. Re-examined the SAME saved predictions (`preds.parquet`, no
+new run) at the finer (ticker, horizon, window) level — 25,600 paired hit/miss
+observations across 400 windows × 16 tickers × 4 horizons.
+
+- Overall `mean(multi_better) = hit_multi - hit_uni` across all cells: -0.00035 (matches
+  the aggregate ΔDA already reported above).
+- Per-window mean (multivariate's edge averaged across the 64 ticker×horizon cells active
+  in that window): ranges -0.078 to +0.078 (roughly ±5 of 64 cells tipping either way),
+  which *looks* like meaningful spread at a glance.
+- **Formal check, not eyeballing**: ran a 500-iteration label-permutation test (randomly
+  swap which arm is "multi" vs "uni" per cell, recompute the same per-window variance) to
+  ask whether the OBSERVED variance across windows exceeds what pure chance produces.
+  Result: observed variance 0.000768 vs. permutation-null mean 0.000727 (95th percentile
+  0.000815) — **p=0.22, not significant.** The per-window spread is statistically
+  indistinguishable from sampling noise.
+- Also checked per-ticker clustering: range -0.005 to +0.005 across the 16 tickers, no
+  discernible pattern (best/worst tickers aren't grouped by sector or liquidity).
+- **Conclusion**: the aggregate null was NOT hiding a real, time-localized or
+  ticker-localized effect. This directly answers the "did Chronos find something subtle
+  that a blunt metric missed" question — checked properly, and the answer is no. Combined
+  with Phase E's five negative results (which tested a different hypothesis shape —
+  short-window pairwise bursts, not multi-ticker joint structure), this closes off both the
+  "aggregate skill" and "hidden localized skill" readings of the multivariate arm's null.
+
 ## Decision / Next
 
 **Gate FAILED. Phase C (lead-lag screening) is NOT funded, per the pre-registered rule.**

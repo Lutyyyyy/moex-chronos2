@@ -213,6 +213,16 @@ phases** instead of a linear stage sequence:
   actual joint-attention switch; prior stages (0-2) never set it, so Stage 2b's negative
   result was effectively a univariate baseline already — confirmed by Phase B's univariate
   arm landing at almost the same DA as Stage 2b.
+  - **Per-window clustering check (2026-09-17, added after Phase E's daily results)**:
+    re-examined the SAME saved `preds.parquet` (both arms, no new run) at the
+    (ticker, horizon, window) level — 25,600 paired observations — to check whether the
+    aggregate null hid a real, localized multivariate edge (the original hope behind trying
+    Chronos multivariate: finding non-obvious, non-pairwise structure a coarse metric might
+    wash out). Ran a 500-iteration label-permutation test on the per-window variance rather
+    than eyeballing the spread: observed variance 0.000768 vs. permutation-null mean
+    0.000727 (95th pct 0.000815), **p=0.22 — not significant**. No time-localized or
+    ticker-localized clustering found; the aggregate null is a genuine null, not a metric
+    artifact hiding real structure. Full writeup in `path_a/scratchpads/phase_b_scratch_pad.md`.
 - **Phase C — lead-lag screening across the full 80-ticker universe. ✅ concluded, GATE
   FAILED (2026-09-17).** Proceeded despite Phase B's gate failing, since
   Phase B only tested one question — does grouping a fixed 16-ticker basket for *joint*

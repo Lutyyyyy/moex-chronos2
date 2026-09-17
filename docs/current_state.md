@@ -498,6 +498,32 @@ Snapshot for the next Claude instance. Picks up after the first successful Stage
       result (a clean, adequately-powered discovery-stage null), resolving the
       ambiguity v1 left behind. Full writeup, including the "why this counts as a
       valid loosening and not p-hacking" reasoning: `path_a/scratchpads/phase_e_scratch_pad.md`.
+28. **Phase B per-window clustering check — no hidden structure found (2026-09-17)**:
+    user pushed back on whether "leader-follower" (Phase C/E's pairwise design) undersold
+    what Chronos multivariate was originally hoped to find — non-obvious, non-pairwise
+    multi-ticker structure a coarse aggregate DA number could wash out. Fair distinction:
+    Phase B's multivariate arm gave Chronos joint attention across a 16-ticker basket (not
+    a pairwise test), but the gate decision only ever looked at (ticker, horizon)-aggregated
+    DA, never asked whether a real but localized effect existed underneath that average.
+    - Re-examined Phase B's already-saved `preds.parquet` (both arms, no new Chronos run)
+      at the (ticker, horizon, window) level via `_hit_miss_by_cell` (§13, already existed)
+      — 25,600 paired hit/miss observations across 400 windows.
+    - `runner.ipynb` §2i added (reproducible, not a one-off script).
+    - Ran a formal 500-iteration label-permutation test on the per-window variance of
+      `multi_better = hit_multi - hit_uni` (not just eyeballing the ±0.078 raw spread,
+      which looked suggestive at a glance) — observed variance 0.000768 vs.
+      permutation-null mean 0.000727 (95th pct 0.000815), **p=0.22, not significant**.
+      Per-ticker range also checked (-0.005 to +0.005, no discernible pattern).
+    - **Conclusion: no hidden time-localized or ticker-localized multivariate edge.** The
+      aggregate null (Phase B's gate FAILED, entry 17) is a genuine null, not an artifact
+      of averaging away a real subset effect. This directly answers the "did Chronos find
+      something subtle a blunt metric missed" question — checked properly, and it did not.
+      Combined with Phase E's five results (a different hypothesis shape — short-window
+      pairwise bursts, not joint multi-ticker structure), this closes off both readings of
+      "maybe Chronos saw something non-obvious." Full writeup:
+      `path_a/scratchpads/phase_b_scratch_pad.md` ("Per-window clustering check").
+    - User's stated next step if this also came back null: try 10-minute bars. Not yet
+      started — this entry's result is exactly that trigger condition.
 
 ## Stages (Path A) — retired scheme, historical record only (see entry 15)
 
