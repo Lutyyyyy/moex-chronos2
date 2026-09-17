@@ -142,9 +142,37 @@ Snapshot for the next Claude instance. Picks up after the first successful Stage
       survive), `context_len=250` (matches Stage 1c), `covariates: full`, `data_source:
       algopack`. Combined scratchpad `path_a/scratchpads/phase_b_scratch_pad.md` (paired-arm
       structure, not the per-stage template, since the gate's McNemar test needs both arms
-      read together). **Not yet run** — indexes/futures still come from ISS (algo_data's
-      index/futures output isn't wired into `load_stage_inputs`) and need a fresh prefetch for
-      2020-2024, not yet cached locally.
+      read together).
+
+17. **Phase B run + GATE FAILED (2026-09-17)**: both arms run to completion, locally, on a
+    dedicated Python 3.12 venv (`path_a/.venv` — CPU, no GPU needed; Chronos-2 is a ~150M-param
+    T5-base-sized model, genuinely light for zero-shot inference at this scale — real total
+    time was ~15 min per arm including a one-time ISS prefetch, not the "must use Colab GPU"
+    assumption this session started with). 400 windows, 16 tickers, both arms.
+    - **Two real bugs found and fixed along the way** (both would have silently produced wrong
+      or crashed results, not just been slow): (1) `build_covariate_panel` was building
+      volume-covariate columns from all 22 *configured* tickers instead of the 16 that
+      actually survived `build_price_panel`'s coverage guard — one short-history ticker's
+      ragged data collapsed the whole covariate panel via `dropna`, silently producing "0
+      windows". (2) `run_stage` passed the original 22-ticker config list into
+      `run_walk_forward` instead of the survivors, causing a `KeyError` once panels were
+      correctly filtered. Both fixed in `basic_cells.ipynb` (`assemble_panels`, `run_stage`);
+      see `path_a/scratchpads/phase_b_scratch_pad.md`'s run log for full detail.
+    - **Gate test implemented**: `mcnemar_gate_test()`, new `basic_cells.ipynb` §13 — paired
+      exact binomial McNemar test per (ticker, horizon) cell (recomputed from `preds.parquet`
+      + `ret_panel`, since per-window hit/miss isn't itself persisted), BH-corrected across
+      the 64-cell family, matching the existing BH pattern in `per_cell_metrics`.
+    - **Result**: aggregate ΔDA (multivariate − univariate) ≈ **-0.00035** (not positive),
+      **0/64 cells BH-significant**. Both arms independently landed at chance-level DA
+      (~0.484, matching Stage 2b's original 0.485) and are nearly indistinguishable from each
+      other on every metric. **Clean fail, not borderline** — per the pre-registered stopping
+      rule (decided *before* either run, see scratchpad), this is decisive: no context_len
+      sweep, no retry to chase significance.
+    - **Gate FAILED → Phase C (lead-lag screening) is NOT funded, per the plan's own gating
+      rule.** Phase D (stretch backtest) was gated on B *or* C passing — B failed and C is not
+      funded, so Phase D is also not funded. This is the second independent negative result
+      (after Stage 2b) at chance-level predictability for MOEX daily returns via zero-shot
+      Chronos-2, with or without cross-series attention, at this universe/context_len scope.
 
 ## Stages (Path A) — retired scheme, historical record only (see entry 15)
 
@@ -181,36 +209,32 @@ Snapshot for the next Claude instance. Picks up after the first successful Stage
 - **Path B (AutoGluon fine-tune)** is sketched in `exp_plan.md` §6 and in the legacy `path_a/archive/legacy_notebooks/moex_chronos2_pipeline.ipynb` §7 but not yet wired into the runner. Queue: after Stage 7.
 - **Batching at 10m × ≥400 windows × 12 series**: not stress-tested. T4 should hold; `preds_partial.parquet` checkpoint every 25 windows is the recovery path.
 - **CatBoost baseline** (wiki §7) is not in B0–B3. Optional Path B-era addition.
-- **`algo_data/config.md`'s `tickers.shares`** still holds the original 10-ticker hand-picked
-  panel, not the new 80-ticker `equity_universe.yaml`. Update before running the full
-  historical AlgoPack pull for the pivot's Phase B/C.
-- **Full AlgoPack historical run not yet executed** for the expanded universe — `algo_data`'s
-  own `needed.md` still flags Colab↔`apim.moex.com` reachability as untested; do this before
-  relying on Colab for the run (works fine locally per this session's live smoke tests).
+- ~~`algo_data/config.md`'s `tickers.shares` still holds the original 10-ticker panel~~ —
+  **resolved 2026-09-17**: expanded to a 22-ticker sector-stratified subsample, real pull
+  executed (see session entry 16).
+- ~~Full AlgoPack historical run not yet executed~~ — **resolved 2026-09-17**: executed
+  locally (22 tickers, candles/1d, 2020-2024). Colab↔`apim.moex.com` reachability is still
+  untested, but moot for now — local runs work fine and don't need Colab (session entry 17).
 
 ## Suggested next session
 
-**Run Phase B** — Phase A (data) and Phase B (code + configs) are both done as of
-2026-09-17 (session entry 16); nothing has actually executed on Colab/GPU yet.
-1. On Colab: source `basic_cells.ipynb` into `runner.ipynb`, set `CONFIG_PATH =
-   "configs/phase_b_multivariate.yaml"`, run. First run needs a fresh ISS prefetch (indexes +
-   BR/Si/GD futures chain for 2020-2024, not yet cached) before the Chronos loop starts —
-   expect this to take a while, same soft-prefetcher rate limits as before.
-2. Repeat with `configs/phase_b_univariate.yaml` (same ISS cache now warm, so this run should
-   be faster to reach the Chronos loop).
-3. Confirm `price_panel.shape` printed by `run_stage` matches the expected ~16 tickers for
-   both runs (coverage guard should drop the same 6 tickers both times — if it doesn't, that's
-   a bug, not a data difference, since both configs share the same `min_ticker_coverage`).
-4. Compute the paired McNemar test on directional hit/miss per (ticker, horizon, window) across
-   the two runs' `metrics.csv`/`preds.parquet` — not yet implemented as code, needs writing
-   (reuse cell 21's existing BH-correction pattern for the cell-family correction). Record in
-   `path_a/scratchpads/phase_b_scratch_pad.md`'s "McNemar test result" section.
-5. Apply the gate's decision rule (ΔDA > 0 AND ≥1 BH-significant cell favoring multivariate AND
-   beats baselines) and record PASS/FAIL with reasoning — do not iterate on hyperparameters to
-   chase significance if it fails; a clean negative result is a valid, useful outcome here.
-6. If PASS: begin Phase C design (discovery/confirmation split + the `metric_window`
-   enforcement fix). If FAIL: write up in this file's session log, stop — Phase C is not
-   funded per the pre-registered rule.
+**Phase B's gate FAILED (session entry 17) — Phase C and D are not funded per the
+pre-registered rule.** This is not a "keep going" checkpoint; it's a decision point. Two
+independent negative results now exist (Stage 2b's 60m/12-ticker/univariate run, and Phase
+B's 400-window/16-ticker gate at both `cross_learning` settings) — both landing at
+chance-level DA (~0.48-0.49) with zero BH-significant cells. Before starting any new
+implementation work, the open question for the user is **what direction the project takes
+next**, not which phase to implement — options include (not decided, for discussion):
+- Accept the negative result as the project's finding and write it up (a rigorous,
+  honestly-reported negative result is itself a valid CV-quality deliverable — that was an
+  explicit goal from the start of the pivot).
+- Try a materially different scope (different `context_len`, different universe, a covariate
+  richer than daily candles via `algo_data`'s `tradestats`/`obstats`/`futoi`, a different
+  target horizon) — but any of these should be explicitly justified as a *new* experiment,
+  not a retry of Phase B chasing significance.
+- Pivot to Path B (AutoGluon fine-tuning) instead of further zero-shot screening — sketched
+  but never implemented; a fine-tuned model is a different question than "does zero-shot
+  Chronos-2 see anything," and isn't foreclosed by this result.
 
-**Carryover items** (unchanged, see Known gaps): `metric_window` enforcement (now scoped to
-Phase C), price-level covariates, Path B fine-tune wiring.
+**Carryover items** (unchanged, see Known gaps): `metric_window` enforcement (was scoped to
+Phase C, now on hold since C isn't funded), price-level covariates, Path B fine-tune wiring.

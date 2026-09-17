@@ -84,33 +84,127 @@ justified experiment — not a silent retry of the same test.
 | 2026-09-17 | — | User asked why Colab/GPU at all, given no fine-tuning is happening. Checked: Chronos-2 is T5-base-sized (~150M params, `d_model=768`, 12 layers) — genuinely light. Decided to add local-run support to `runner.ipynb` rather than keep debugging Colab/Drive friction; Colab stays the primary path, local CPU is the documented fallback (see `runner.ipynb`'s top markdown cell). |
 | 2026-09-17 | — | Local dry run (before adding local support fully) surfaced a **second real bug**, same shape as the covariate one: `run_stage` calls `run_walk_forward(pipeline, cfg, ...)` with the ORIGINAL `cfg["tickers"]` (22 configured), not the survivors — `build_chronos_inputs` then does `ret_panel[tic]` for a dropped ticker (e.g. SMLT) and crashes with `KeyError`. Would have hit this on Colab too, right after the covariate fix, on the very next run. Fixed in `run_stage` (cell 28): reconciles `cfg["tickers"]` to `ret_panel.columns` once, right after `assemble_panels`, before any downstream consumer (walk-forward, baselines, metrics, plots) touches it. |
 | 2026-09-17 | multivariate | **Local timing test, 5 real windows, CPU, `covariates: none` (isolating model-call cost)**: model load 2s (warm HF cache), 5 windows in 1.4s → **~0.3s/window**. Extrapolated: ~1.8 min for 400 windows (one arm), ~3.6 min for both arms combined. Confirms the user's original instinct — Chronos-2 zero-shot inference at this scale is genuinely CPU-light; the earlier assumption that Colab/GPU was necessary was not well-founded for this specific workload (Colab remains useful for avoiding local compute load, not because CPU is infeasible). Real run (with covariates, full window count) will be slower than this isolated estimate, but not by orders of magnitude. |
+| 2026-09-17 | multivariate | **FULL RUN COMPLETED**, locally, `.venv` (Python 3.12) kernel, CPU. Real time ~15 min total (includes the one-time ISS prefetch for indexes/futures 2020-2024, not yet cached before this run). 400/400 windows, 16 tickers confirmed in `metrics.csv` (both bug fixes held up under a real full-scale run). Output: `runs/phase_b_multivariate/`. See Top-line numbers below. |
 
 ## Top-line numbers (paste from each arm's `summary.json`)
 ### Multivariate
+```json
+{
+  "stage_id": "phase_b_multivariate",
+  "group_mode": "multivariate",
+  "n_windows": 400,
+  "mean_da_primary": 0.4841145833333333,
+  "median_da_primary": 0.48624999999999996,
+  "cells_signif_05": 0,
+  "mean_pearson_primary": -0.058163962074690045,
+  "mean_coverage_primary": 0.7890104166666667,
+  "trend2_n_signals": 4457,
+  "trend2_acc_both": 0.23872560017949293,
+  "trend2_acc_cum": 0.5086380973749158
+}
 ```
-{}
-```
-### Univariate
-```
-{}
-```
+Per-horizon (`metrics_aggregate.csv`, 16 tickers × 4 horizons = 64 cells, 0 significant anywhere):
 
-## McNemar test result (fill in once both arms have run)
-- Discordant pairs (multivariate-right/univariate-wrong vs the reverse): `n01=?, n10=?`
-- Test statistic / p-value:
-- BH-corrected significant cells favoring multivariate:
-- **Gate decision**: `PASS | FAIL` — reasoning:
+| h | mean DA | mean Pearson | mean coverage |
+|---|---------|--------------|----------------|
+| 1 | 0.4845  | 0.0348       | 0.793          |
+| 2 | 0.4884  | -0.0210      | 0.781          |
+| 3 | 0.4836  | -0.1134      | 0.792          |
+| 5 | 0.4803  | -0.0401      | 0.794          |
+
+Chance-level DA across every horizon, near-zero/negative mean Pearson, 0/64 BH-significant
+cells — consistent in shape with Stage 2b's earlier negative result.
+
+### Univariate
+```json
+{
+  "stage_id": "phase_b_univariate",
+  "group_mode": "univariate",
+  "n_windows": 400,
+  "mean_da_primary": 0.4838541666666667,
+  "median_da_primary": 0.4875,
+  "cells_signif_05": 0,
+  "mean_pearson_primary": -0.05273592954529105,
+  "mean_coverage_primary": 0.7868749999999999,
+  "trend2_n_signals": 4350,
+  "trend2_acc_both": 0.2354022988505747,
+  "trend2_acc_cum": 0.5126436781609195
+}
+```
+Same 16 tickers as the multivariate arm (confirmed identical ticker sets). Chance-level DA,
+0/64 BH-significant cells — nearly indistinguishable from the multivariate arm's top-line
+numbers (0.4839 vs 0.4841 mean DA).
+
+## McNemar test result — 2026-09-17
+
+Implemented `mcnemar_gate_test()` in `basic_cells.ipynb` §13 (new section, after the stage
+orchestrator): per-(ticker, horizon) paired exact binomial McNemar test on directional
+hit/miss, matched window-by-window between the two arms' `preds.parquet` (hit/miss per
+window isn't itself persisted, so it's recomputed from `preds.parquet` + a freshly-rebuilt
+`ret_panel`, using the identical sign-match rule `per_cell_metrics` uses). BH-corrected
+across all 64 (ticker × horizon) cells, matching the existing BH pattern in
+`per_cell_metrics`. Verified end-to-end against the real run outputs before trusting the
+result (ticker-set match confirmed, `ret_panel` shape confirmed 1301×16 matching both runs).
+
+**Per-cell**: 64 cells, all `n_paired=400` (full pairing, no dropped windows in either arm).
+Raw p-values scatter as expected under the null (a few cells <0.05: AFKS h3 p=0.029, FEES h5
+p=0.035, ROSN h3 p=0.012) — **none survive BH correction** (all `p_value_bh` ≥ 0.75).
+
+**Gate**:
+```json
+{
+  "gate": "FAIL",
+  "agg_delta_da": -0.0003515625000000038,
+  "n_cells": 64,
+  "n_signif_bh": 0,
+  "n_signif_favoring_multivariate": 0
+}
+```
+- Aggregate ΔDA (multivariate − univariate) ≈ **-0.00035** — effectively zero, not positive.
+- **0 of 64 cells BH-significant** — no per-cell evidence either.
+- (Baseline-beating check, third pre-registered condition, checked for completeness even
+  though the first two already fail: multivariate's mean DA 0.4841 edges past `last`
+  baseline's 0.4758 and `ar1`'s 0.4736, roughly ties `momentum5`'s 0.4905 — moot, doesn't
+  change the gate outcome.)
+
+**Gate decision: FAIL — not borderline, treated as decisive per the pre-registration.**
+ΔDA is not just small, it's slightly negative; 0/64 cells is as clean a null result as this
+test design can produce. Per the pre-registration note above (§"single run per arm"), this
+does NOT trigger a context_len sweep — a clean fail is decisive, not a reason to chase it
+with more runs.
 
 ## Plots checked
-- [ ] `phase_b_multivariate/plots/da_heatmap.png`
-- [ ] `phase_b_univariate/plots/da_heatmap.png`
+- [x] `phase_b_multivariate/plots/da_heatmap.png` — no visible per-ticker/horizon pattern, consistent with 0/64 significant
+- [x] `phase_b_univariate/plots/da_heatmap.png` — same, near-identical to multivariate's
 - [ ] `phase_b_multivariate/plots/da_vs_last.png`
 - [ ] `phase_b_univariate/plots/da_vs_last.png`
 
 ## Observations
-What surprised us. What was expected. Per-ticker outliers.
+Multivariate and univariate arms are nearly indistinguishable on every top-line number
+(mean DA 0.4841 vs 0.4839, mean Pearson -0.058 vs -0.053, coverage 0.789 vs 0.787) — this
+isn't just "no significant difference," the two arms behave almost identically window-by-
+window (discordant pair counts per cell are small and roughly balanced, e.g. AFKS h1:
+n01=17/n10=8 is the largest imbalance in either direction across all 64 cells, and even that
+doesn't survive BH correction). Combined with both arms independently landing at
+chance-level DA (matching Stage 2b's original negative result), this reads as a genuine
+"grouping doesn't help, and neither variant has an edge" result at this context_len/universe/
+data scope — not a case where the test lacked power to see something real.
 
 ## Decision / Next
-Gate pass → begin Phase C design (discovery/confirmation split, `metric_window` enforcement
-fix). Gate fail → write up negative result in `docs/current_state.md`, stop, do not proceed
-to Phase C.
+
+**Gate FAILED. Phase C (lead-lag screening) is NOT funded, per the pre-registered rule.**
+Per `exp_plan.md` §3b: "Gate fails → Phase C not funded, write up as a negative result, stop."
+
+Next actions:
+1. Write up this result in `docs/current_state.md` as a new session-log entry (honest
+   negative result — this is a real, useful finding for the project's CV-quality goal, not
+   a failure to hide).
+2. Update `docs/exp_plan.md` §3b to mark Phase B concluded (FAIL) and Phase C as not started
+   (blocked by the gate, not "not yet reached").
+3. Do NOT propose a context_len sweep or any other retry to chase significance — the
+   pre-registration explicitly rules this out for a clean fail.
+4. Open question for the user: does the project stop here (Phase B/gate was the last planned
+   phase before Phase D's stretch backtest, which is itself gated on B OR C passing — B
+   failed, so Phase D is also not funded per the plan), or is there a different direction to
+   take given two independent negative results (Stage 2b, Phase B) now confirm chance-level
+   predictability at this scope?

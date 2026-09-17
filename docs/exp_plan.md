@@ -195,24 +195,32 @@ phases** instead of a linear stage sequence:
   Real AlgoPack pull executed 2026-09-17 (22 tickers configured, `build_price_panel` keeps
   ~16 after the coverage guard — 6 dropped as recent listings/redomiciliations with
   insufficient 2020-2024 history; see `algo_data/current_state.md`).
-- **Phase B — multivariate-vs-univariate gate.** Does grouping many series for Chronos-2 to
-  forecast jointly (`cross_learning=True`) beat forecasting each independently
-  (`cross_learning=False`)? Pre-registered stopping rule: paired McNemar test on directional
-  hit/miss, BH-corrected across cells; gate passes iff ΔDA > 0 AND ≥1 BH-significant cell
-  favoring multivariate AND multivariate still beats baselines. **Gate fails → Phase C not
-  funded, write up as a negative result, stop.** **Configs + code written 2026-09-17
-  (`configs/phase_b_multivariate.yaml`, `phase_b_univariate.yaml`); not yet run.**
-  `group_mode` in `basic_cells.ipynb` (cell 19, `run_walk_forward`) is a single boolean
-  threaded straight to `predict_df`'s `cross_learning` kwarg — verified against
+- **Phase B — multivariate-vs-univariate gate. ✅ concluded, GATE FAILED (2026-09-17).**
+  Does grouping many series for Chronos-2 to forecast jointly (`cross_learning=True`) beat
+  forecasting each independently (`cross_learning=False`)? Both arms run: 400 windows,
+  16 tickers, `context_len=250`, identical configs except `group_mode`
+  (`configs/phase_b_multivariate.yaml` / `phase_b_univariate.yaml`). Paired McNemar test
+  (`mcnemar_gate_test()`, `basic_cells.ipynb` §13), BH-corrected across 64 (ticker × horizon)
+  cells: **aggregate ΔDA ≈ -0.00035 (not positive), 0/64 BH-significant cells favoring
+  multivariate.** Both arms independently landed at chance-level DA (~0.484), nearly
+  indistinguishable from each other on every metric — not a power problem, a genuine null
+  result. **Gate FAILED → Phase C is not funded, per the pre-registered rule.** Full
+  numbers, per-cell table, and the pre-registration note (this was decided as a single-run
+  test, no context_len sweep, before any run) in `path_a/scratchpads/phase_b_scratch_pad.md`.
+  `group_mode` in `basic_cells.ipynb` (`run_walk_forward`) is a single boolean threaded
+  straight to `predict_df`'s `cross_learning` kwarg — verified against
   `chronos-forecasting`'s installed source that this, not `id_column` grouping alone, is the
   actual joint-attention switch; prior stages (0-2) never set it, so Stage 2b's negative
-  result is effectively a univariate baseline already. See
-  `path_a/scratchpads/phase_b_scratch_pad.md`.
-- **Phase C — lead-lag screening (gated on B).** Discovery-vs-confirmation time split;
-  pairwise lagged cross-correlation of returns on the discovery window only; BH-corrected
-  shortlist; confirmation-only evaluation via `run_stage` with `metric_window` finally
-  enforced (closes the gap noted in `current_state.md`'s Known gaps). Not started.
-- **Phase D — stretch backtest (gated on B or C).** Toy, explicitly educational framing. Not
+  result was effectively a univariate baseline already — confirmed by Phase B's univariate
+  arm landing at almost the same DA as Stage 2b.
+- **Phase C — lead-lag screening (gated on B). NOT FUNDED — Phase B's gate failed.**
+  Discovery-vs-confirmation time split; pairwise lagged cross-correlation of returns on the
+  discovery window only; BH-corrected shortlist; confirmation-only evaluation via
+  `run_stage` with `metric_window` finally enforced (closes the gap noted in
+  `current_state.md`'s Known gaps). Design only, per the plan's own gating rule — not to be
+  started unless the project's direction changes.
+- **Phase D — stretch backtest (gated on B or C). NOT FUNDED — both gating conditions
+  failed/not attempted.** Toy, explicitly educational framing. Not
   designed yet.
 
 New configs use `phase_<letter>_<name>.yaml` naming (e.g. `phase_b_multivariate.yaml`,

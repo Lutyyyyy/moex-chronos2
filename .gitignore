@@ -13,16 +13,13 @@ repo_res/
 *.pdf
 
 # --- Generated experiment artifacts ---
+# Matches both the repo-root runs/ (pre path_a/ reorg configs) and path_a/runs/ (current
+# configs, output_dir: runs resolved relative to path_a/ as cwd) -- nothing under either is
+# tracked; result numbers belong in the relevant scratchpad .md, not raw run output.
 .tmp.driveupload/
 tmp/
-runs/**/preds/
-runs/**/plots/
-runs/**/metrics*.csv
-runs/**/summary.json
-runs/**/config.yaml
-runs/**/*_output_*.md
-runs/**/*output_*.md
-runs/**/*output_*
+runs/
+path_a/runs/
 
 # --- Pasted Obsidian images ---
 Pasted image*
