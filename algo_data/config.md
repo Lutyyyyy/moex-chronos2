@@ -23,17 +23,17 @@ candles:
   intervals: [1d]              # allowed: 1m, 10m, 1h, 1d — 1d only for the first pivot-phase pull
 
 tickers:
-  # 22-ticker stratified subsample of equity_universe.yaml (80 tickers, see data/universe/),
-  # picked 2026-09-17 for the Phase B multivariate-vs-univariate gate: top-liquidity ticker(s)
-  # per sector across sectors, not just top-N by turnover (avoids biasing the gate toward a
-  # liquidity-correlated cluster). Sector map + rationale: docs/usage.md §6.
-  # X5 and RAGR (retail, agriculture) were in the original 24-ticker pick but dropped after the
-  # 2026-09-17 pull confirmed zero candle history anywhere in 2020-2024 — both are recent MOEX
-  # redomiciliations (foreign listing -> MOEX) with real current liquidity but no history over
-  # this backtest period. equity_universe.yaml's ranker only checks recent history (240+ days),
-  # so it selected them without catching this. No replacement picked; retail/agriculture have
-  # thinner representation as a result (retail: MGNT, LENT still present).
-  shares: [GAZP, SMLT, SBER, ROSN, MTSS, LKOH, T, OZON, PLZL, VTBR, YDEX, VKCO, GMKN, MAGN, AFKS, MGNT, PHOR, AFLT, IRAO, FEES, MDMG, LENT]   # board TQBR
+  # Full 80-ticker equity_universe.yaml list (see data/universe/), expanded 2026-09-17 for
+  # Phase C's lead-lag cross-correlation screen (path_a/exp_plan.md §3b) after Phase B's
+  # 22-ticker multivariate-vs-univariate gate concluded with a clean negative result — Phase C
+  # asks a different question (does ANY pair among many tickers show lead-lag structure) that
+  # needs the widest reasonable universe, not the sector-stratified subsample Phase B used.
+  # X5 and RAGR are known (from the Phase B pull) to have zero 2020-2024 candle history —
+  # both recent MOEX redomiciliations; left in rather than pre-trimmed, same as before, so the
+  # pipeline's own missing-ticker reporting is the audit trail, not a hand-maintained exclusion
+  # list. Other tickers in this 80 may turn out to have similarly short history; check the pull
+  # output before trusting the final ticker count.
+  shares: [GAZP, SMLT, SBER, ROSN, MTSS, LKOH, T, OZON, NVTK, PLZL, VTBR, YDEX, VKCO, GMKN, MAGN, TATN, ALRS, X5, NLMK, AFKS, SNGS, CHMF, POSI, MGNT, SNGSP, TRNFP, PHOR, SIBN, AFLT, RUAL, SBERP, SVCB, SPBE, SGZH, MTLR, SELG, MOEX, UGLD, FLOT, HEAD, IRAO, TATNP, DOMRF, RNFT, RTKM, FEES, BSPB, MDMG, ASTR, SFIN, UPRO, CNRU, RAGR, HYDR, BANEP, ENPG, MTLRP, CBOM, WUSH, LENT, MSNG, PRMD, MRKC, FESH, EUTR, RASP, NMTP, MVID, IRKT, BELU, OZPH, RENI, UNAC, MSRS, PIKK, UWGN, VSMO, RTKMP, DELI, TORS]   # board TQBR
   indices: [IMOEX]                                                       # board SNDX (candles only)
   currency: [CNYRUB_TOM]                                                 # board CETS
   futures:                     # continuous series by 2-char contract prefix; FUTOI uses the same code
@@ -56,16 +56,24 @@ overwrite: false               # true = re-download every month chunk (current m
 
 ## Panel rationale
 
-**2026-09-17 (current): Phase B gate, 22 tickers, candles/1d only.** Stratified sample across
-11 sectors (oil_gas, metals, financials, tech, telecom, retail, transport, utilities,
-chemicals, healthcare, realestate — holding/agriculture dropped, see below) drawn from
-`equity_universe.yaml`'s 80-ticker ranked list — top-liquidity pick(s) per sector rather than
-a flat top-N by turnover, so the multivariate-vs-univariate gate isn't tested only on the most
-liquidity-correlated cluster. `datasets`/`candles.intervals` scoped to the cheapest slice
-that Phase B/C need (daily candles only) — widen once a phase actually needs
-tradestats/obstats/futoi or finer intervals. Originally 24 tickers; **X5 and RAGR dropped**
-after the actual pull confirmed zero 2020-2024 candle history (recent MOEX redomiciliations —
-see `tickers.shares` comment above and `current_state.md` session log for detail).
+**2026-09-17 (current): Phase C lead-lag screen, full 80 tickers, candles/1d only.** All of
+`equity_universe.yaml`'s ranked list — Phase C's discovery step needs the widest reasonable
+universe to screen for pairwise lead-lag structure (up to 80×79/2 = 3160 pairs), unlike
+Phase B's gate which deliberately used a smaller stratified sample. `datasets`/
+`candles.intervals` unchanged (`[candles]`/`[1d]`) — daily closes are all the correlation
+screen needs. X5 and RAGR are known to have zero 2020-2024 history from the Phase B pull;
+other tickers in the 80 may also turn out short — check the pull's ticker count before
+trusting it (same pattern as before, no pre-trimming).
+
+**Superseded (2026-09-17): Phase B gate, 22 tickers.** Stratified sample across 11 sectors
+(oil_gas, metals, financials, tech, telecom, retail, transport, utilities, chemicals,
+healthcare, realestate — holding/agriculture dropped) drawn from `equity_universe.yaml`'s
+80-ticker ranked list — top-liquidity pick(s) per sector rather than a flat top-N by
+turnover, so the multivariate-vs-univariate gate wasn't tested only on the most
+liquidity-correlated cluster. Originally 24 tickers; **X5 and RAGR dropped** after the
+actual pull confirmed zero 2020-2024 candle history (recent MOEX redomiciliations). Result:
+gate FAILED (see `docs/current_state.md` session entry 17) — this panel is no longer active
+but kept as a documented step in the project's history.
 
 **Superseded (2026-09-15): original 10-ticker default.** SBER, GAZP, LKOH, ROSN, NVTK, GMKN,
 TATN, MGNT, PLZL, CHMF — liquid TQBR blue chips across banks, oil & gas, metals and retail,
