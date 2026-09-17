@@ -341,6 +341,9 @@ Snapshot for the next Claude instance. Picks up after the first successful Stage
       evidence worth chasing with burst detection; if it's null too, Phase E proceeds
       regardless (user wants it either way) but with one more prior data point about how
       much signal exists at daily/1h resolution in this universe.
+    - Detailed research notebook: [`transient_dependency_research.md`](transient_dependency_research.md)
+      collects candidate mechanisms, event/rolling/regime experiments, covariates, metrics,
+      statistical safeguards, evidence levels, and a proposed Phase E sequence.
 
 ## Stages (Path A) — retired scheme, historical record only (see entry 15)
 
