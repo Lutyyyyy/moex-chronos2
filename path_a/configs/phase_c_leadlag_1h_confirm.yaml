@@ -1,0 +1,74 @@
+# Phase C (1h follow-on) — confirmation arm
+# Same discovery/confirmation lead-lag screen as phase_c_leadlag_confirm.yaml (daily,
+# GATE FAILED -- see path_a/scratchpads/phase_c_scratch_pad.md), re-run at 1h resolution.
+# Genuinely different test, not a retry: different frequency regime, same rigor (discovery/
+# confirmation split, BH correction, leave-one-out market-factor residualization, per-pair
+# out-of-sample criterion). User's original intent was 1h from the start.
+#
+# BEFORE RUNNING: fill in `tickers:` below with the union of ticker_i/ticker_j from the 1h
+# discovery shortlist (runner.ipynb §2b with DISCOVERY_INTERVAL=60, DISCOVERY_FROM=
+# "2023-01-02", DISCOVERY_TILL="2024-05-24" -- see that cell's comment for the exact split).
+# If the shortlist is empty, do not run this config -- 0 survivors is a valid, complete
+# result on its own (same pre-registered rule as the daily run, decision 5 in the scratchpad).
+stage_id: phase_c_leadlag_1h_confirm
+notes: >
+  1h-resolution lead-lag confirmation, post-Phase-C follow-on (daily gate
+  FAILED 2026-09-17). Does Chronos-2 (cross_learning=True) show real
+  predictive skill, out-of-sample, on the specific ticker pairs that the
+  1h discovery screen flagged as BH-significant (q<0.05, top-20 cap if
+  oversubscribed)? Per-pair success requires the pair's cells to be
+  BH-significant WITHIN this confirmation run's own test family (not
+  reusing discovery p-values) AND beat the `last` baseline -- same
+  three-part gate shape as the daily confirmation, applied per pair.
+
+data_source: algopack
+algopack_processed_path: algo_data/data/processed/candles_1h/shares.parquet
+min_ticker_coverage: 0.9
+
+group_mode: multivariate
+
+interval: 60
+# Confirmation window: strictly after the discovery window (2023-01-02..2024-05-24,
+# 365 trading days) used in the 1h discovery driver. 24mo total range (2023-01-02..
+# 2024-12-30), ~70/30 split, verified zero date overlap (3-day gap: 2024-05-25..26).
+# Update BOTH this config and runner.ipynb's §2b discovery cell together if the split
+# ever changes.
+date_from: "2024-05-27"
+date_till: "2024-12-30"
+
+tickers:
+  # PLACEHOLDER -- replace with the union of ticker_i/ticker_j from the 1h discovery
+  # shortlist before running. Example shape (do not use as-is):
+  # - GAZP
+  # - SBER
+  []
+
+indexes:        [IMOEX, MOEXOG, MOEXMM, MOEXFN, RGBI]
+futures_proxies: [BR, Si, GD]
+# NOTE: indexes/futures_proxies come from the ISS live cache (not algo_data), fetched at
+# `interval` above -- unlike the daily confirmation run, no 1h cache exists yet for these
+# (checked 2026-09-17: only interval=24 parquets present in moex_cache/), so this run's
+# first §2 prefetch step will hit the network for real, not just read from disk.
+
+context_len: 250   # bars, not calendar time -- ~28 trading days lookback at 1h (8 bars/
+                    # day), deliberately NOT scaled up to match daily's ~1yr calendar
+                    # lookback. User's own concern (raised before this run): more lookback
+                    # history can dilute predictions with noise rather than help; kept
+                    # identical to Phase B/C's daily context_len for direct comparability.
+horizon: 5
+quantiles: [0.1, 0.5, 0.9]
+
+walk_forward:
+  shift: 1
+  max_windows: 400   # same test-family size as Phase B/C daily runs; confirmation window
+                      # has ~993 scorable bar-positions before this cap (156 trading days
+                      # x 8 bars/day - context_len - horizon), so max_windows is a genuine
+                      # cap here, not close to the data's ceiling.
+
+covariates: full
+
+eval_horizons:    [1, 2, 3, 5]
+primary_horizons: [2, 3, 5]
+baselines: [zero, last, momentum5, ar1]
+
+output_dir: runs

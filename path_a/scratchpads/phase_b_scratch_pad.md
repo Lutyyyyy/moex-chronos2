@@ -190,6 +190,14 @@ chance-level DA (matching Stage 2b's original negative result), this reads as a 
 "grouping doesn't help, and neither variant has an edge" result at this context_len/universe/
 data scope — not a case where the test lacked power to see something real.
 
+**Pinball loss backfill (2026-09-17, added after Phase C concluded)**: mean pinball loss
+across primary horizons is 0.005093 (multivariate) vs 0.005098 (univariate) — same
+near-identical pattern as every other metric. Read jointly with coverage (~0.79, close to the
+0.80 target in both arms): the quantile intervals are reasonably well-calibrated — Chronos-2
+correctly expresses appropriate uncertainty width — but that calibration carries zero
+directional skill (DA≈0.484). This is a more precise statement than "DA≈0.50" alone: the
+model isn't miscalibrated or broken, it just has no directional edge to calibrate around.
+
 ## Decision / Next
 
 **Gate FAILED. Phase C (lead-lag screening) is NOT funded, per the pre-registered rule.**

@@ -233,6 +233,13 @@ now a broad *individual-pair* screen with proper out-of-sample confirmation. Eac
 genuinely different hypothesis (grouped-vs-independent forecasting; any-pair lead-lag
 structure) and each landed at chance level.
 
+**Pinball loss backfill (2026-09-17)**: mean pinball loss across primary horizons is 0.00639,
+somewhat higher than Phase B's ~0.0051 (consistent with this confirmation panel's tickers
+having higher realized volatility — mean |return| MAE proxy 0.0191 vs Phase B's 0.0144, not a
+sign of worse calibration). Coverage is 0.751 (vs target 0.80) — the loosest of the three runs
+so far, though still in a reasonable range. Same overall reading as Phase B: intervals are in
+the right ballpark, no directional skill on top of them.
+
 ## Decision / Next
 
 Per decision 5 (pre-registered): a null discovery result would have been a complete, valid

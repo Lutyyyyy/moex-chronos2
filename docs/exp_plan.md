@@ -259,14 +259,32 @@ phases** instead of a linear stage sequence:
     discoveries from the ~15k-test family rather than "insufficient search." This is now the
     **third independent negative result** for zero-shot Chronos-2 on MOEX returns (after
     Stage 2b and Phase B), each testing a genuinely different hypothesis.
-  - Next planned add-ons (not yet started, discussed 2026-09-17): switch to 1h bars
-    (`interval: 60`) once the daily-frequency screen above concludes — sized as affordable
-    within a 1-2 day compute budget (task/request count is driven by month-chunks, not bar
-    count, so the pull cost is comparable to the 80-ticker daily pull; Chronos compute stays
-    at `context_len=250` bars, i.e. ~28 trading days lookback, `max_windows=400`, same as
-    Phase B, to avoid diluting predictions with excess history); add Pearson/quantile-loss
-    reporting alongside DA (near-zero extra cost, reuses existing prediction output).
-    Covariate ablation (full vs none) considered and explicitly declined for this phase.
+  - **Quantile (pinball) loss — added and backfilled 2026-09-17.** `basic_cells.ipynb` §15
+    (`pinball_loss`/`per_cell_quantile_loss`), computed retroactively from Phase B's and
+    Phase C's already-saved `preds.parquet` (no re-run needed). Result: Phase B's two arms
+    have near-identical pinball loss (0.00509 multivariate vs 0.00510 univariate — matches
+    every other metric's "indistinguishable" pattern); Phase C confirmation: 0.00639.
+    Coverage (q10-q90 hit rate) is close to the 0.80 target in all three runs (0.79, 0.79,
+    0.75) — Chronos-2's quantile intervals are reasonably well-calibrated even though the
+    median forecast carries no directional skill. No baseline-comparison helper was added:
+    `baseline_predictions` gives every baseline (zero/last/momentum5/ar1) the same value
+    across all three quantile columns (point forecasts, not distributional), so a
+    baseline's own "pinball loss" would just be a rescaled MAE, not a real calibration
+    test — interpreted jointly with `coverage` instead.
+  - **1h follow-on — scaffolded 2026-09-17, not yet run.** Genuinely different frequency
+    test (user's original intent), not a Phase C retry. `algo_data/config.md`
+    `candles.intervals` widened to `[1d, 1h]` (period kept at the full 2020-2024 range to
+    avoid truncating the already-processed daily parquet — see `algo_data/current_state.md`).
+    24-month analysis window (2023-01-02→2024-12-30), ~70/30 split (365 discovery / 156
+    confirmation trading days, verified zero overlap). Discovery driver in `runner.ipynb`
+    §2b is now parameterized (`DISCOVERY_INTERVAL`/`DISCOVERY_FROM`/`DISCOVERY_TILL`) so the
+    same cell serves both daily and 1h — verified this refactor is a no-op for the daily
+    case (reproduces the exact same 20-pair/18-ticker result). New confirmation config
+    `configs/phase_c_leadlag_1h_confirm.yaml`, `context_len=250` bars kept identical to the
+    daily runs (~28 trading days lookback at 1h's 8 bars/day, deliberately not scaled up —
+    per the user's own concern that more lookback history can dilute rather than help).
+    `tickers:` placeholder pending the 1h discovery run. **User runs the 80-ticker 1h
+    AlgoPack pull, then discovery, then confirmation, manually next.**
 - **Phase D — stretch backtest (gated on B or C). NOT FUNDED — both gating conditions
   failed/not attempted.** Toy, explicitly educational framing. Not
   designed yet.

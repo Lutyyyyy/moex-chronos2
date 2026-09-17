@@ -279,6 +279,41 @@ Snapshot for the next Claude instance. Picks up after the first successful Stage
       not a trigger to loosen the shortlist threshold or re-run discovery chasing
       significance.
 
+21. **Fine-tuning question answered; pinball-loss backfill + 1h follow-on scaffolded
+    (2026-09-17).** User asked how likely fine-tuning (Path B) is to change the negative
+    results. Assessment: unlikely to help much — all three negative results converge on
+    DA≈0.50/Pearson≈0 at daily resolution, consistent with daily MOEX returns being close to
+    a random walk at this timescale, which is a property of the data, not something
+    fine-tuning manufactures. Fine-tuning helps most when there's a specific idiosyncratic
+    pattern a general model underweights; there's no evidence yet such a pattern exists.
+    Recommended sequencing: don't decide on fine-tuning until after the two cheaper,
+    already-planned follow-ons (1h frequency, better metrics) are tried — if either finds
+    something, that's a much better-informed reason to fine-tune *toward* a located signal;
+    if both come back null too, that further narrows the case for fine-tuning being useful
+    here. User agreed, chose to proceed with both follow-ons.
+    - **Pinball loss added (`basic_cells.ipynb` §15) and backfilled onto Phase B/C's
+      already-saved `preds.parquet`** (no re-run needed — all three quantile columns were
+      already persisted). Phase B: 0.00509 (multivariate) vs 0.00510 (univariate) — same
+      "indistinguishable" pattern as every other metric. Phase C confirmation: 0.00639.
+      Coverage (already computed, q10-q90 hit rate) is close to the 0.80 target in all three
+      runs (0.79/0.79/0.75) — the quantile intervals are reasonably well-calibrated even
+      though the median forecast has no directional skill; a more precise statement than
+      "DA≈0.50" alone. Deliberately did NOT add a pinball-loss-vs-baseline comparison:
+      `baseline_predictions` gives every baseline the same value across all three quantile
+      columns (point forecasts), so that comparison would just be a rescaled MAE, not a
+      real calibration test.
+    - **1h follow-on scaffolded, not yet run.** `algo_data/config.md` `candles.intervals`
+      widened to `[1d, 1h]` (`period` deliberately left at the full 2020-2024 range — it
+      applies globally across every interval, so narrowing it would have silently
+      truncated the already-processed, already-cited daily parquet). 24-month analysis
+      window chosen (2023-01-02→2024-12-30, not the full 5 years) to keep cost down per the
+      user's explicit request for a "shorter window" first look; ~70/30 discovery/
+      confirmation split (365/156 trading days), verified zero overlap. `runner.ipynb` §2b's
+      discovery driver refactored to be parameterized by interval/date range (was
+      daily-only) — verified the refactor is a no-op for the daily case (exact same 20-pair
+      shortlist reproduced). New confirmation config `configs/phase_c_leadlag_1h_confirm.yaml`
+      with `tickers:` left as a placeholder pending the 1h discovery run's shortlist.
+
 ## Stages (Path A) — retired scheme, historical record only (see entry 15)
 
 | Stage | Interval | Config | What it answers |
@@ -327,33 +362,37 @@ Snapshot for the next Claude instance. Picks up after the first successful Stage
 
 ## Suggested next session
 
-**Phase C is fully concluded — GATE FAILED (session entries 18–20).** This is the third
-independent negative result (after Stage 2b and Phase B), and each tested a genuinely
-different hypothesis: single-basket univariate zero-shot, basket-wide grouped-vs-independent,
-and now a full-universe any-pair lead-lag screen with proper discovery/confirmation
-out-of-sample validation (20 discovery-shortlisted pairs, 0 replicated). Full numbers,
-per-pair table, and reasoning: `path_a/scratchpads/phase_c_scratch_pad.md`.
+**Phase C (daily) is fully concluded — GATE FAILED (session entries 18–20).** Third
+independent negative result (after Stage 2b and Phase B). User decided (session entry 21):
+proceed with the 1h follow-on and the quantile-loss metric work (both now scaffolded/done),
+defer the fine-tuning (Path B) decision until after seeing whether either of those turns up
+anything.
 
-This is not a "keep going" checkpoint — it's the same decision point flagged after Phase B,
-now with stronger evidence behind it. Before starting any new implementation work, the open
-question for the user is **what direction the project takes next**:
-1. Write up all three negative results as the project's finding — a rigorous,
-   honestly-reported negative result across three independent hypotheses (with a working,
-   verified discovery/confirmation screening pipeline as a reusable artifact) is itself a
-   valid CV-quality deliverable.
-2. The two follow-ons already discussed this session (not yet started, still on the table):
-   switch to 1h bars (user's original intent — sized as affordable within a 1-2 day compute
-   budget, since AlgoPack's request count is driven by month-chunks not bar count; Chronos
-   compute would stay at `context_len=250` bars / ~28 trading days lookback, deliberately
-   short per the user's own concern that more history can dilute rather than help, and
-   `max_windows=400` matching the test-family sizes used so far); and reporting
-   Pearson/quantile-loss alongside DA (near-zero marginal cost) since DA's binary-sign
-   threshold may be masking real calibration/quantile skill that these three DA-based nulls
-   wouldn't have caught. Both are genuinely different tests, not a Phase C retry.
-3. Pivot to Path B (AutoGluon fine-tuning) — a fundamentally different question ("can a
-   fine-tuned model find something zero-shot can't") not foreclosed by any of these results.
+Quantile-loss metric work is **done** (session entry 21) — Pearson was already computed;
+pinball loss added and backfilled onto Phase B/C. Coverage is close to target in all three
+runs, so the calibration itself looks fine; the missing piece was always directional skill,
+which none of the three runs had.
 
-Covariate ablation (full vs none) was explicitly discussed and declined for Phase C.
+1h follow-on is **scaffolded, not yet run** — immediate next steps (user runs manually, same
+pattern as Phase B/C):
+1. Run the widened AlgoPack pull with `candles.intervals: [1d, 1h]` (`algo_data/config.md`,
+   already edited) — same invocation as before. Existing daily cache/output is untouched;
+   only 1h chunks are new fetches.
+2. Check the 1h pull's ticker coverage (may differ from daily's — intraday listings/halts
+   can behave differently from daily coverage).
+3. Run `runner.ipynb` §2b with `DISCOVERY_INTERVAL=60`, `DISCOVERY_FROM="2023-01-02"`,
+   `DISCOVERY_TILL="2024-05-24"` (see that cell's own comment) to get the 1h shortlist.
+4. If non-empty: fill `configs/phase_c_leadlag_1h_confirm.yaml`'s `tickers:` placeholder,
+   run confirmation (`date_from="2024-05-27"`, already set). If empty: valid, complete
+   result per the same pre-registered rule as the daily run — write up, don't loosen the
+   threshold.
+5. Report results back — will fill in a new `phase_c_1h_scratch_pad.md` (not yet created)
+   once there's something to put in it, following the same pre-registration-first pattern.
+
+If the 1h follow-on also comes back null, that's a fourth independent negative result and a
+stronger case that fine-tuning is unlikely to help either (rules out "wrong metric" and
+"wrong frequency" as explanations too) — revisit the fine-tuning decision then, per the
+reasoning in session entry 21.
 
 **Carryover items** (unchanged, see Known gaps): price-level covariates, Path B fine-tune
 wiring.
