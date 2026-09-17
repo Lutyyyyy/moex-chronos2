@@ -314,6 +314,34 @@ Snapshot for the next Claude instance. Picks up after the first successful Stage
       shortlist reproduced). New confirmation config `configs/phase_c_leadlag_1h_confirm.yaml`
       with `tickers:` left as a placeholder pending the 1h discovery run's shortlist.
 
+22. **Phase E idea captured (2026-09-17), not designed yet — queued for after the 1h
+    follow-on concludes.** User's hypothesis: lead-lag dependencies may not be stationary
+    across the whole sample (what every test so far assumed) but could occur in short
+    bursts — real for a window, then gone — averaging out to "no signal" in a global test
+    even if real, detectable structure exists locally. Not ruled out by any of the three
+    negative results, since Stage 2b/Phase B/Phase C all used one correlation/DA number
+    over the full window.
+    - Goal stated explicitly as **detection only, not exploitation** — the user wants to
+      show such bursts are catchable early, not build a trading rule. This simplifies the
+      eventual design: no need for realistic transaction-cost/execution simulation, just
+      rigorous out-of-sample proof that a burst can be flagged from data available at the
+      time, not just seen in hindsight.
+    - Flagged as materially harder than 1h/metrics, not a cheap add-on: (a) rolling-window
+      correlation on short windows (e.g. 20-60 days) has few degrees of freedom and is
+      prone to spurious high values by chance — a 20-day window needs |r|≈0.44 just to hit
+      p<0.05 uncorrected; (b) testing (pair × lag × window-start-time) multiplies the
+      already-large Phase C test family by orders of magnitude, demanding either much
+      longer history or a stricter effect-size floor; (c) "detectable" must mean detectable
+      causally (using only data up to time t), which needs its OWN discovery/confirmation
+      split layered on top of the pair-level one already built for Phase C — proving a
+      burst existed in hindsight is easy and not the actual claim; proving a rule could have
+      flagged it in real time is the hard, valuable part.
+    - Explicitly sequenced: finish the 1h follow-on (and its own discovery/confirmation
+      result) before starting Phase E design. If 1h finds something, that's independent
+      evidence worth chasing with burst detection; if it's null too, Phase E proceeds
+      regardless (user wants it either way) but with one more prior data point about how
+      much signal exists at daily/1h resolution in this universe.
+
 ## Stages (Path A) — retired scheme, historical record only (see entry 15)
 
 | Stage | Interval | Config | What it answers |
