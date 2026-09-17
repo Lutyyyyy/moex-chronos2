@@ -44,6 +44,40 @@ config snapshot and running notes moved here, once a stage had nothing left to a
   (finer intervals, sector splits, covariates, stability checks, holdout — all written before
   the pivot). Superseded wholesale by the Phase A–D structure; archived rather than continued.
 
+- `phase_b_multivariate.yaml`, `phase_b_univariate.yaml` + `phase_b_scratch_pad.md` — Phase B
+  gate. **Concluded 2026-09-17: FAILED** (chance-level DA both arms, 0/64 BH-significant
+  cells). See `docs/current_state.md` session entry 17. Archived 2026-09-17 (see below).
+- `phase_c_leadlag_confirm.yaml` + `phase_c_scratch_pad.md` — Phase C daily lead-lag
+  confirmation. **Concluded: FAILED** (20 discovery-shortlisted pairs, 0/20 replicated). See
+  `docs/current_state.md` session entries 19-20. Archived 2026-09-17.
+- `phase_c_leadlag_1h_confirm.yaml`, `phase_c_leadlag_1h_confirm_univariate.yaml` +
+  `phase_c_1h_scratch_pad.md` — Phase C's 1h follow-on, both `group_mode` arms. **Concluded:
+  FAILED** (13 discovery-shortlisted pairs, 0/13 replicated; univariate arm statistically
+  indistinguishable from multivariate). See `docs/current_state.md` session entry 23. Archived
+  2026-09-17.
+- `phase_e_scratch_pad.md` — Phase E (event-conditioned burst detection), daily+1h, 3 parameter
+  sets. **Concluded: all NULL.** No config file exists for this phase — it's implemented as
+  pure pandas/scipy functions in `basic_cells.ipynb`/`runner.ipynb` (§16, §2c-2h), not a
+  `run_stage` config. See `docs/current_state.md` session entries 25-27. Archived 2026-09-17.
+
+**Why these moved together, 2026-09-17**: all four were run *before* the dividend/split price
+adjustment (`close_adj`, added to `algo_data` the same day — see `algo_data/current_state.md`
+and `algo_data/docs/usage.md` §4). Every one of these results was computed on raw,
+unadjusted `close` — confirmed via direct scan to contain at least two real artifact types
+(BELU's undetected 8-for-1 split, MTSS-style dividend-driven single-day drops) that were not
+accounted for. The results themselves are **not retracted or re-run** — per the project's
+explicit discipline (a null result is a complete, valid finding) and the user's explicit
+choice to apply the fix going forward only, not retroactively. They're archived because the
+*methodology* (raw unadjusted prices) is now known to be superseded by a better one, not
+because the negative conclusions are believed to be wrong. `runs/phase_b_*`, `runs/phase_c_*`
+output stays live at its existing path per the standard convention below — only the config
+snapshots and scratchpads moved.
+
+The 8 `phase_sector_*.yaml` sector-basket configs (see `docs/scratchpads/phase_sector_scratch_pad.md`)
+were **not** archived — they were scaffolded but never run, so there's no concluded result to
+retire; they'll run on already-adjusted `close_adj` data going forward once `price_col` is set
+in their configs.
+
 ## Why archive instead of delete
 
 These are genuine records of what was tried and what was learned (including the negative
