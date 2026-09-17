@@ -28,7 +28,19 @@ candles:
   # truncate the already-processed, already-cited 2020-2024 candles_1d/shares.parquet
   # that Phase B/C's results are built on. The notebook-side date_from/date_till configs
   # restrict Chronos to the shorter 1h analysis window instead.
-  intervals: [1d, 1h]          # allowed: 1m, 10m, 1h, 1d
+  #
+  # Added 10m 2026-09-17: five independent negative results at daily/1h (Stage 2b,
+  # Phase B, Phase C daily/1h, Phase E daily/1h) plus a per-window clustering check on
+  # Phase B's multivariate arm (p=0.22, no hidden localized structure -- see
+  # docs/current_state.md entries 25-28) closed off both "aggregate skill" and "hidden
+  # non-pairwise structure" readings at those two resolutions. User's explicit next
+  # step: push to 10-minute bars. Real added cost flagged before pulling: 10m needs
+  # ~3 ISS pages/month per ticker (vs 1h's ~1), so this interval alone costs roughly 3x
+  # the 1h pull's request volume (~2.5hr/~29k requests estimated). Same 80-ticker
+  # universe and full 2020-2024 period as 1h (not narrowed) -- keeps this pull reusable
+  # for a later Phase C/E-style screen at 10m without a second pull, and avoids the
+  # `period`-truncation risk documented above.
+  intervals: [1d, 1h, 10m]     # allowed: 1m, 10m, 1h, 1d
 
 tickers:
   # Full 80-ticker equity_universe.yaml list (see data/universe/), expanded 2026-09-17 for

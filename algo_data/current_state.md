@@ -91,14 +91,40 @@ _Last updated: 2026-09-17 (equity universe selection added; adopted by ../moex-h
   notebook side (`date_from`/`date_till` in the Chronos-side configs) instead.
 - Offline test suite re-run after the config edit: 47/47 passing (config-only change).
 
+## Session update (2026-09-17): `config.md` widened to `candles/1d + 1h + 10m` for a 10-minute follow-on
+
+- The 1h follow-on (above) ran to completion — **gate FAILED again** (13 discovery-shortlisted
+  pairs, 0/13 replicated; see `../path_a/scratchpads/phase_c_1h_scratch_pad.md`). Phase E
+  (event-conditioned burst detection, a genuinely different hypothesis shape) then also ran at
+  both daily and 1h and came back null across three parameter sets (see
+  `../path_a/scratchpads/phase_e_scratch_pad.md`). A per-window clustering check on Phase B's
+  multivariate arm (label-permutation test, p=0.22) ruled out a hidden localized effect the
+  aggregate metric might have missed. Five independent negative results total at daily/1h,
+  across three hypothesis shapes (aggregate forecasting skill, full-sample pairwise
+  correlation, short-window causal bursts).
+- User's explicit next step: push to 10-minute bars, the finest interval this pipeline
+  supports. `candles.intervals` widened from `[1d, 1h]` to `[1d, 1h, 10m]` — additive, not
+  replacing either existing interval. Same 80-ticker universe and full 2020-2024 `period`
+  (unchanged, same truncation-avoidance rationale as the 1h widening — `period` applies
+  globally across every interval).
+- **Real added cost, flagged before pulling**: unlike the 1h widening (which cost roughly the
+  same order as the daily pull, since AlgoPack's request cost is driven by month-chunks, not
+  bar count, and most 1h months fit in a single ISS page), 10m bars are dense enough that most
+  months need **~3 ISS pages** (10m gives ~1113 bars/month vs. the 500-row page limit, vs. 1h's
+  ~189 bars/month fitting in one page). This interval alone is estimated at roughly **3x the
+  1h pull's request volume — ~2.5 hours, ~29,000 requests** — a real time commitment, not a
+  quick add-on. Not yet run as of this entry.
+- Offline test suite re-run after the config edit: 47/47 passing (config-only change).
+
 ## Next steps
-1. Run the pipeline with the widened `[1d, 1h]` interval scope to produce
-   `processed/candles_1h/shares.parquet` alongside the existing daily one. Existing 1d raw
-   month-chunk cache and processed output are untouched (interval-scoped, not overwritten);
-   only 1h chunks are new fetches.
-2. Check the 1h pull's actual ticker coverage before trusting it — same caveat as the daily
-   pull (some of the 80 may have insufficient/gappy 1h history even where daily history was
-   fine, since intraday listings/halts can differ from daily coverage).
-3. Hand off to `path_a/basic_cells.ipynb` for the 1h discovery/confirmation run (new configs,
-   not yet written as of this entry).
+1. Run the pipeline with the widened `[1d, 1h, 10m]` interval scope to produce
+   `processed/candles_10m/shares.parquet` alongside the existing daily/1h ones. Existing 1d/1h
+   raw month-chunk cache and processed output are untouched (interval-scoped, not overwritten);
+   only 10m chunks are new fetches. Expect ~2.5 hours given the per-month page-count increase.
+2. Check the 10m pull's actual ticker coverage before trusting it — same caveat as daily/1h
+   (some of the 80 may have insufficient/gappy 10m history even where daily/1h history was
+   fine).
+3. Hand off to `path_a/basic_cells.ipynb`/`runner.ipynb` for the 10m aggregate (Phase B-style
+   multivariate-vs-univariate) test — the user's chosen first step, cheaper than a full
+   Phase C/E-style screen at 10m's much larger candidate/test-family scale.
 4. Answer the 🟡 items in `needed.md`: Super Candles resampling, futures price adjustment, merged table for moex-hack.
