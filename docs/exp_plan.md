@@ -213,37 +213,52 @@ phases** instead of a linear stage sequence:
   actual joint-attention switch; prior stages (0-2) never set it, so Stage 2b's negative
   result was effectively a univariate baseline already — confirmed by Phase B's univariate
   arm landing at almost the same DA as Stage 2b.
-- **Phase C — lead-lag screening across the full 80-ticker universe. IN PROGRESS
-  (2026-09-17), proceeding despite Phase B's gate failing.** Phase B only tested one
-  question — does grouping a fixed 16-ticker basket for *joint* forecasting beat
-  forecasting them independently (a basket-wide average effect). Per-ticker breakdown of
-  Phase B's own output (`runs/phase_b_univariate/metrics.csv`) showed no ticker with even a
-  hint of individual signal (best cell DA=0.52, p=0.227 uncorrected) — evidence of "nothing
-  in that specific 16-ticker sample," not evidence against "any pair among a much larger set
-  shows lead-lag structure," which Phase C was always designed to test. Full rationale in
-  `path_a/scratchpads/phase_c_scratch_pad.md`.
-  - **C1 (universe + data)**: `algo_data/config.md` `tickers.shares` widened 22→80 (full
-    `equity_universe.yaml`), `datasets`/`candles.intervals` unchanged (`[candles]`/`[1d]`).
-  - **C2 (discovery)**: `basic_cells.ipynb` §14 — `pairwise_lagged_xcorr()` (Pearson
+- **Phase C — lead-lag screening across the full 80-ticker universe. ✅ concluded, GATE
+  FAILED (2026-09-17).** Proceeded despite Phase B's gate failing, since
+  Phase B only tested one question — does grouping a fixed 16-ticker basket for *joint*
+  forecasting beat forecasting them independently (a basket-wide average effect). Per-ticker
+  breakdown of Phase B's own output (`runs/phase_b_univariate/metrics.csv`) showed no ticker
+  with even a hint of individual signal (best cell DA=0.52, p=0.227 uncorrected) — evidence of
+  "nothing in that specific 16-ticker sample," not evidence against "any pair among a much
+  larger set shows lead-lag structure," which Phase C was always designed to test. Full
+  rationale in `path_a/scratchpads/phase_c_scratch_pad.md`.
+  - **C1 (universe + data) — done.** `algo_data/config.md` `tickers.shares` widened 22→80
+    (full `equity_universe.yaml`). Real pull executed 2026-09-17 (6039 requests, 24m):
+    76/80 tickers have any data (X5, RAGR, CNRU, DOMRF have zero 2020-2024 history), 55 of
+    those 76 survive `build_price_panel`'s 0.9 coverage guard on the discovery-window slice.
+  - **C2 (discovery) — done.** `basic_cells.ipynb` §14 — `pairwise_lagged_xcorr()` (Pearson
     correlation per ticker pair × lag 1–5 × direction, both `i` and `j` as potential leader,
     on the discovery-window slice 2020-01-03→2023-06-30 only) + `select_pair_shortlist()`
     (BH q<0.05, top-20 cap if oversubscribed by |r|). BH pattern copied verbatim from
-    `mcnemar_gate_test()` (§13), not reimplemented. Verified against a synthetic
-    lag-recovery test (injected `b = a.shift(2) + noise` among 8 noise tickers → correctly
-    recovered lag=2, correct leader, correctly the sole BH survivor) and a manual BH
-    cross-check on a toy p-value array.
-  - **C3 (confirmation)**: new `configs/phase_c_leadlag_confirm.yaml`, `group_mode:
-    multivariate`, confirmation window 2023-07-01→2024-12-30 (zero date overlap with
-    discovery — no `metric_window` machinery needed, the config's own `date_from`/
-    `date_till` IS the leakage guard; the earlier "`metric_window` parsed but not enforced"
-    known-gap was stale — it doesn't exist anywhere in `basic_cells.ipynb`, corrected in
-    `current_state.md`). `tickers:` filled in from C2's shortlist (placeholder `[]` until
-    then). Reuses `run_stage` unchanged. Per-pair success: BH-significant within
-    confirmation's own test family (not discovery's p-values) AND beats `last` baseline —
-    mirrors Phase B's three-part gate shape, applied per pair.
-  - **0 survivors at discovery is a pre-registered valid, complete result**, not a trigger to
-    loosen the shortlist rule — BH at q<0.05 across ~30k tests is designed so a true null
-    screen shows close to zero false positives.
+    `mcnemar_gate_test()` (§13), not reimplemented.
+    **Methodology amendment after the first run**: an initial unresidualized run found 20
+    BH-significant pairs, but 19/20 shared the same lag (3) across economically-unrelated
+    tickers — traced to the panel-wide market-average return's own lag-3 autocorrelation
+    (≈0.16), which alone produces a cluster of same-lag false positives. Added leave-one-out
+    market-factor residualization to `pairwise_lagged_xcorr` (each ticker demeaned by every
+    OTHER ticker's same-day return before lagged correlation) and re-ran. Verified the
+    residualization itself doesn't introduce bias at the real ~55-ticker scale (a naive
+    small-N synthetic sanity check looked broken but was actually testing an unrepresentative
+    regime — re-verified at matched scale). Final (residualized) discovery run: 55 tickers,
+    876 days, 14,850 tests, **20 BH-significant pairs, lags spread 1–5 with no single-lag
+    cluster** — union of 18 tickers, full table in the scratchpad.
+  - **C3 (confirmation) — done, GATE FAILED.** `configs/phase_c_leadlag_confirm.yaml`,
+    `group_mode: multivariate`, confirmation window 2023-07-04→2024-12-30 (135 windows,
+    18 tickers, zero date overlap with discovery). Basket-wide: chance-level DA (0.508),
+    0/72 BH-significant (ticker, horizon) cells, mean Pearson ≈ -0.037. **Per-pair test (the
+    actual pre-registered criterion, decision 7)**: recomputed each of the 20 shortlisted
+    pairs' lagged correlation at its discovered lag, on confirmation-window returns, same
+    leave-one-out residualization, BH-corrected within this 20-pair confirmation family —
+    **0/20 pairs significant at q<0.05.** Best uncorrected p=0.007 (MTSS→UNAC) doesn't
+    survive correction (p_bh=0.140). Several pairs' correlation sign flips entirely
+    out-of-sample (e.g. GMKN→MTLRP: discovery r=+0.20 → confirmation r=-0.008). Full
+    per-pair table in `path_a/scratchpads/phase_c_scratch_pad.md`.
+  - **Interpretation**: the discovery/confirmation split worked exactly as designed — 20
+    BH-significant discovery hits (after fixing a real market-factor confound, see C2 above)
+    produced zero replications out-of-sample, direct evidence those hits were false
+    discoveries from the ~15k-test family rather than "insufficient search." This is now the
+    **third independent negative result** for zero-shot Chronos-2 on MOEX returns (after
+    Stage 2b and Phase B), each testing a genuinely different hypothesis.
   - Next planned add-ons (not yet started, discussed 2026-09-17): switch to 1h bars
     (`interval: 60`) once the daily-frequency screen above concludes — sized as affordable
     within a 1-2 day compute budget (task/request count is driven by month-chunks, not bar

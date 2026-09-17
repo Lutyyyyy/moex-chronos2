@@ -216,6 +216,69 @@ Snapshot for the next Claude instance. Picks up after the first successful Stage
       for this phase. None of the 1h/metrics work has started yet — sequenced to run after
       Phase C's daily-frequency screen concludes.
 
+19. **Phase C1 pull + C2 discovery run, with a real methodology bug caught and fixed
+    (2026-09-17)**: user ran the 80-ticker AlgoPack pull (6039 requests, 24m11s) — 76/80
+    tickers have any 2020-2024 data (X5, RAGR already known zero-history; CNRU, DOMRF newly
+    found zero-history, not yet individually investigated). User then ran §14's discovery
+    screen (`pairwise_lagged_xcorr`/`select_pair_shortlist`) against the discovery-window
+    slice: 55/76 tickers survived `build_price_panel`'s 0.9 coverage guard, 876 days,
+    14,850 (pair, lag, direction) tests.
+    - **First run (unresidualized) found a real problem, not a real result**: 20
+      BH-significant pairs, but 19/20 shared the exact same lag (3) across
+      economically-unrelated ticker pairs — checked the panel-wide equal-weight market
+      return's own autocorrelation and found lag-3 ≈0.16, which alone explains a cluster of
+      same-lag false positives across pairs sharing exposure to that common factor. Spot
+      residualizing one flagged pair (GAZP→IRKT) by hand confirmed the pattern: some pairs'
+      correlation survived removing the market factor, most collapsed or weakened a lot.
+    - **Fixed by adding market-factor residualization to `pairwise_lagged_xcorr`** (new
+      `residualize_market=True` default): each ticker demeaned by the leave-one-out average
+      of every OTHER ticker before lagged correlation is computed. Getting this right took
+      two failed attempts worth recording: (a) a simple panel-wide mean (including the
+      ticker itself) mechanically induces spurious negative cross-correlation purely from
+      shared subtraction — verified exactly r=-1.0 with only 2 series; (b) a leave-two-out
+      variant (excluding both tickers of the pair being tested) still leaked signal when the
+      excluded pair was itself strongly correlated, on a small ~10-ticker synthetic test.
+      Final leave-one-out version verified correct: negligible induced bias (~-0.02) and
+      zero spurious BH-significant hits on a synthetic test matched to the REAL panel's
+      ~55-ticker scale — the smaller synthetic panics used during earlier iterations were
+      themselves misleading (an unrepresentative small-N regime, not a conservative check),
+      a useful reminder that a synthetic verification test's scale matters, not just its
+      presence.
+    - **Re-ran discovery with the fix**: same 20 BH-significant pairs count, but now lags
+      spread across 1–5 with no single-lag cluster, and only 2 of the original 20 pairs
+      (GAZP-IRKT, AFLT-VTBR) persist — consistent with most of the original list having been
+      the market-factor artifact. Full 20-pair table in
+      `path_a/scratchpads/phase_c_scratch_pad.md`. Union of 18 tickers filled into
+      `configs/phase_c_leadlag_confirm.yaml`'s `tickers:`; all 18 confirmed present with
+      382-386/386 days coverage in the confirmation window (2023-07-01→2024-12-30) — no
+      further coverage-guard drops expected.
+    - **Confirmation (C3) is ready to run, not yet run.** User runs manually next.
+
+20. **Phase C3 confirmation run + GATE FAILED (2026-09-17)**: user ran
+    `run_stage("configs/phase_c_leadlag_confirm.yaml")` — 135 windows, 18 tickers.
+    Basket-wide: chance-level DA (0.508), 0/72 BH-significant (ticker, horizon) cells, mean
+    Pearson ≈ -0.037 — matches Phase B's earlier basket-wide null.
+    - **Per-pair test (the actual pre-registered criterion)**: recomputed each of the 20
+      discovery-shortlisted pairs' lagged correlation at its discovered lag, on
+      confirmation-window returns (2023-07-04..2024-12-30, 390 days), same leave-one-out
+      residualization as discovery, BH-corrected within this 20-pair confirmation family
+      (not reusing discovery's p-values, per the pre-registered design). **0/20 pairs
+      significant at q<0.05.** Best uncorrected p=0.007 (MTSS→UNAC) doesn't survive
+      correction (p_bh=0.140). Several pairs' correlation sign flipped entirely out-of-sample
+      (e.g. GMKN→MTLRP: discovery r=+0.20 → confirmation r=-0.008; PHOR→RASP: +0.21→-0.003).
+      Full per-pair table in `path_a/scratchpads/phase_c_scratch_pad.md`.
+    - **Gate FAILED.** The discovery/confirmation split worked exactly as designed: 20
+      BH-significant discovery hits (surviving only after a real market-factor confound was
+      caught and fixed, see entry 19) produced zero replications out-of-sample — direct
+      evidence those hits were false discoveries from the ~15,000-test discovery family, not
+      a case of "the search wasn't broad enough." This is the **third independent negative
+      result** for zero-shot Chronos-2 on MOEX returns (Stage 2b, Phase B, Phase C), each
+      testing a genuinely different hypothesis (single-basket univariate; basket-wide
+      grouped-vs-independent; any-pair lead-lag with proper out-of-sample confirmation).
+    - Per the pre-registered decision 5, this is treated as a complete, informative result —
+      not a trigger to loosen the shortlist threshold or re-run discovery chasing
+      significance.
+
 ## Stages (Path A) — retired scheme, historical record only (see entry 15)
 
 | Stage | Interval | Config | What it answers |
@@ -264,33 +327,33 @@ Snapshot for the next Claude instance. Picks up after the first successful Stage
 
 ## Suggested next session
 
-**Phase C is in progress (session entry 18), proceeding despite Phase B's gate having
-FAILED (session entry 17).** Rationale: Phase B only ever tested a basket-wide average
-effect on a fixed 16-ticker sample; per-ticker breakdown showed zero individual signal
-anywhere in that sample (best cell DA=0.52, p=0.227 uncorrected), which is evidence against
-that specific sample, not against the broader "does any pair among 80 tickers show lead-lag
-structure" question Phase C asks. Full reasoning: `path_a/scratchpads/phase_c_scratch_pad.md`.
+**Phase C is fully concluded — GATE FAILED (session entries 18–20).** This is the third
+independent negative result (after Stage 2b and Phase B), and each tested a genuinely
+different hypothesis: single-basket univariate zero-shot, basket-wide grouped-vs-independent,
+and now a full-universe any-pair lead-lag screen with proper discovery/confirmation
+out-of-sample validation (20 discovery-shortlisted pairs, 0 replicated). Full numbers,
+per-pair table, and reasoning: `path_a/scratchpads/phase_c_scratch_pad.md`.
 
-Immediate next steps (user runs manually, per the established Phase B pattern):
-1. Run the widened 80-ticker AlgoPack pull (`algo_data/config.md`, already edited) —
-   `python3 -c "...algopack_pipeline.run('config.md')..."` from `algo_data/`.
-2. Check the pull's actual ticker coverage (some of the 80 may drop like X5/RAGR did).
-3. Run `basic_cells.ipynb` §14 (`pairwise_lagged_xcorr`/`select_pair_shortlist`) against the
-   discovery-window slice (2020-01-03→2023-06-30) to get the shortlist.
-4. If shortlist is non-empty: fill in `configs/phase_c_leadlag_confirm.yaml`'s `tickers:`
-   placeholder from the shortlist, run confirmation (2023-07-01→2024-12-30).
-5. If shortlist is empty: that's a complete, valid result per the pre-registered rule (see
-   scratchpad decision 5) — write up, do not loosen the shortlist threshold and re-run.
+This is not a "keep going" checkpoint — it's the same decision point flagged after Phase B,
+now with stronger evidence behind it. Before starting any new implementation work, the open
+question for the user is **what direction the project takes next**:
+1. Write up all three negative results as the project's finding — a rigorous,
+   honestly-reported negative result across three independent hypotheses (with a working,
+   verified discovery/confirmation screening pipeline as a reusable artifact) is itself a
+   valid CV-quality deliverable.
+2. The two follow-ons already discussed this session (not yet started, still on the table):
+   switch to 1h bars (user's original intent — sized as affordable within a 1-2 day compute
+   budget, since AlgoPack's request count is driven by month-chunks not bar count; Chronos
+   compute would stay at `context_len=250` bars / ~28 trading days lookback, deliberately
+   short per the user's own concern that more history can dilute rather than help, and
+   `max_windows=400` matching the test-family sizes used so far); and reporting
+   Pearson/quantile-loss alongside DA (near-zero marginal cost) since DA's binary-sign
+   threshold may be masking real calibration/quantile skill that these three DA-based nulls
+   wouldn't have caught. Both are genuinely different tests, not a Phase C retry.
+3. Pivot to Path B (AutoGluon fine-tuning) — a fundamentally different question ("can a
+   fine-tuned model find something zero-shot can't") not foreclosed by any of these results.
 
-**Also discussed and queued for after Phase C concludes** (not yet started): switch the
-screen to 1h bars (user's original intent) — sized as affordable within a 1-2 day compute
-budget, since AlgoPack's request count is driven by month-chunks not bar count, and Chronos
-compute stays at `context_len=250` bars (~28 trading days lookback, chosen deliberately
-short per the user's own concern that more lookback history can dilute rather than help) and
-`max_windows=400` (matching Phase B's test-family size). Also queued: report
-Pearson/quantile-loss alongside DA (near-zero marginal cost, reuses existing prediction
-output) since DA's binary-sign threshold may be masking real calibration/quantile skill.
-Covariate ablation (full vs none) was explicitly discussed and declined for this phase.
+Covariate ablation (full vs none) was explicitly discussed and declined for Phase C.
 
 **Carryover items** (unchanged, see Known gaps): price-level covariates, Path B fine-tune
 wiring.

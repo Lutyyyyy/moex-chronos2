@@ -1,16 +1,11 @@
 # Phase C3 — confirmation arm of the lead-lag screen
-# Runs Chronos-2 (group_mode: multivariate) ONLY on the tickers that appear in
-# Phase C2's discovery-phase shortlist (select_pair_shortlist output, BH q<0.05,
-# top_n=20 cap) — not the full 80-ticker universe. Confirmation window is
-# strictly AFTER the discovery window (no date overlap) so this is a genuine
-# out-of-sample test of whatever pairs discovery flagged, not a re-fit.
-#
-# BEFORE RUNNING: fill in `tickers:` below with the union of ticker_i/ticker_j
-# from the discovery shortlist (see path_a/scratchpads/phase_c_scratch_pad.md
-# for the pre-registered discovery/confirmation date split and the actual
-# shortlist once basic_cells.ipynb §14 has been run). If the shortlist is
-# empty, do not run this config — 0 survivors is a valid, complete result on
-# its own; write it up instead (see the plan's decision 5).
+# Runs Chronos-2 (group_mode: multivariate) ONLY on the 18 tickers that appear in
+# Phase C2's discovery-phase shortlist (residualized run, 2026-09-17 -- 20
+# BH-significant pairs, q<0.05, top_n=20 cap) — not the full 80-ticker universe.
+# Confirmation window is strictly AFTER the discovery window (no date overlap) so
+# this is a genuine out-of-sample test of whatever pairs discovery flagged, not a
+# re-fit. Full shortlist table + the market-factor-residualization amendment that
+# produced it: path_a/scratchpads/phase_c_scratch_pad.md.
 stage_id: phase_c_leadlag_confirm
 notes: >
   Phase C confirmation: does Chronos-2 (cross_learning=True) show real
@@ -37,12 +32,29 @@ date_from: "2023-07-01"
 date_till: "2024-12-30"
 
 tickers:
-  # PLACEHOLDER -- replace with the union of ticker_i/ticker_j from Phase C2's
-  # select_pair_shortlist() output before running. Example shape (do not use
-  # as-is):
-  # - GAZP
-  # - SBER
-  []
+  # Union of ticker_i/ticker_j from Phase C2's discovery shortlist (residualized
+  # run, 2026-09-17 -- see path_a/scratchpads/phase_c_scratch_pad.md's "Discovery
+  # results" section for the full 20-pair table with lags/directions/r/p_value_bh).
+  # NOT the unresidualized run's list -- that one was rejected as a market-factor
+  # artifact (19/20 pairs sharing lag=3), see the scratchpad's Amendment 1.
+  - AFLT
+  - BANEP
+  - BSPB
+  - CBOM
+  - GAZP
+  - GMKN
+  - IRAO
+  - IRKT
+  - MSRS
+  - MTLRP
+  - MTSS
+  - MVID
+  - PHOR
+  - RASP
+  - RUAL
+  - SNGSP
+  - UNAC
+  - VTBR
 
 indexes:        [IMOEX, MOEXOG, MOEXMM, MOEXFN, RGBI]
 futures_proxies: [BR, Si, GD]
