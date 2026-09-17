@@ -174,6 +174,48 @@ Snapshot for the next Claude instance. Picks up after the first successful Stage
       (after Stage 2b) at chance-level predictability for MOEX daily returns via zero-shot
       Chronos-2, with or without cross-series attention, at this universe/context_len scope.
 
+18. **Phase C designed and scaffolded (2026-09-17), user explicitly chose to proceed despite
+    Phase B's formal gate failing.** Reasoning: Phase B tested one specific question (does a
+    fixed 16-ticker basket benefit from joint forecasting) and its per-ticker breakdown
+    showed no individual signal anywhere in that sample (best cell DA=0.52, p=0.227
+    uncorrected) — evidence against that sample, not against "does any pair among a much
+    wider universe show lead-lag structure," which is a genuinely different question Phase C
+    was always meant to test. Full design in `path_a/scratchpads/phase_c_scratch_pad.md`
+    (pre-registered before any run) and local plan rev. 3.
+    - **C1**: `algo_data/config.md` `tickers.shares` widened 22→80 (full
+      `equity_universe.yaml`). Offline test suite re-passed (47/47). Pull not yet executed —
+      user runs manually (established Phase B pattern: assistant writes code/configs, user
+      runs, assistant debugs on report).
+    - **C2**: new `basic_cells.ipynb` §14 — `pairwise_lagged_xcorr()` (Pearson r per ticker
+      pair × lag 1-5 × direction, `scipy.stats.pearsonr`) + `select_pair_shortlist()` (BH
+      q<0.05, top-20 cap by |r|). BH snippet copied verbatim from `mcnemar_gate_test()` (§13)
+      rather than reimplemented — verified identical to a manual textbook BH computation on a
+      toy p-array, and verified end-to-end on a synthetic pair (`b = a.shift(2) + noise`
+      among 8 noise tickers): correctly recovered lag=2, correct leader, and was the sole
+      survivor out of 450 tests after BH correction.
+    - **C3**: new `configs/phase_c_leadlag_confirm.yaml` — confirmation window
+      2023-07-01→2024-12-30 (discovery window 2020-01-03→2023-06-30, verified zero date
+      overlap, ~70/30 split as pre-registered). `tickers:` left as an empty-list placeholder
+      pending C2's actual shortlist. Reuses `run_stage` unchanged.
+    - **Corrected a stale known-gap note**: "`metric_window` parsed but not enforced" was
+      simply wrong — grepped `basic_cells.ipynb`, zero references anywhere, the feature
+      doesn't exist. Confirmation's own `date_from`/`date_till` serves as the leakage guard
+      directly instead; no new mechanism built.
+    - **User pushed back usefully on scope** during design discussion: questioned whether one
+      run is enough to trust a negative result (answer: yes for the narrow claim Phase B
+      actually tested, no for a universe-wide claim — which is exactly why Phase C exists);
+      raised DA as a possibly-wrong metric (valid — DA's binary sign threshold can miss real
+      quantile/calibration skill that Pearson or pinball loss would catch; queued as a
+      near-zero-cost add-on, not yet implemented); pushed for 1h bars specifically (was the
+      original intent) — sizing showed this is materially cheaper than first estimated
+      (AlgoPack's request count is driven by month-chunks, not bar count, so a 1h pull costs
+      roughly the same as the 80-ticker daily pull, not ~9x) and fits a 1-2 day compute
+      budget; user separately raised that more lookback history could dilute predictions with
+      noise, so `context_len` stays at 250 *bars* (not scaled to preserve calendar-year
+      lookback) when 1h work starts. Covariate ablation was discussed and explicitly declined
+      for this phase. None of the 1h/metrics work has started yet — sequenced to run after
+      Phase C's daily-frequency screen concludes.
+
 ## Stages (Path A) — retired scheme, historical record only (see entry 15)
 
 | Stage | Interval | Config | What it answers |
@@ -205,7 +247,11 @@ Snapshot for the next Claude instance. Picks up after the first successful Stage
 
 - **Price-level covariates (Stage 5e)** still queued. Encoding rule already decided (log + optional rolling-z 252; never raw price). The resolver now exposes the stitched `close` series (`{name}_close` regridded), so adding `log(close)` / rolling-z as past covariates is a localised patch in `build_covariate_panel`. Not wired yet — done when Stage 5 sub-runs are scheduled.
 - **10m availability**: ISS has no 15m candle at all (root cause of the original Stage 3 all-empty prefetch). Switched to 10m, which is served for shares / indexes / FORTS back to 2011-12-08. Stage 3's 2024-05-01 start is now a deliberate choice (aligned with the 60m study), not a depth limit — widen freely if more windows are wanted.
-- **`metric_window` not enforced**: `run_stage` parses `cfg["metric_window"]` but never applies it as a hard mask. This is now Phase C's leakage guard (discovery-vs-confirmation split needs this to actually work) — fix when Phase C lands, not deferred indefinitely. (Minor edit in `run_stage` — filter `preds` by `t_anchor` inside `metric_window` before the metric pass.)
+- ~~`metric_window` not enforced~~ — **corrected 2026-09-17**: this note was stale/wrong.
+  Grepped the current `basic_cells.ipynb`: zero references to `metric_window` anywhere; the
+  feature was never carried through the Phase A–D rewrite, there's nothing to enforce.
+  Phase C's confirmation-window leakage guard uses the confirmation config's own
+  `date_from`/`date_till` directly instead (see session entry 18) — no new mechanism needed.
 - **Path B (AutoGluon fine-tune)** is sketched in `exp_plan.md` §6 and in the legacy `path_a/archive/legacy_notebooks/moex_chronos2_pipeline.ipynb` §7 but not yet wired into the runner. Queue: after Stage 7.
 - **Batching at 10m × ≥400 windows × 12 series**: not stress-tested. T4 should hold; `preds_partial.parquet` checkpoint every 25 windows is the recovery path.
 - **CatBoost baseline** (wiki §7) is not in B0–B3. Optional Path B-era addition.
@@ -218,23 +264,33 @@ Snapshot for the next Claude instance. Picks up after the first successful Stage
 
 ## Suggested next session
 
-**Phase B's gate FAILED (session entry 17) — Phase C and D are not funded per the
-pre-registered rule.** This is not a "keep going" checkpoint; it's a decision point. Two
-independent negative results now exist (Stage 2b's 60m/12-ticker/univariate run, and Phase
-B's 400-window/16-ticker gate at both `cross_learning` settings) — both landing at
-chance-level DA (~0.48-0.49) with zero BH-significant cells. Before starting any new
-implementation work, the open question for the user is **what direction the project takes
-next**, not which phase to implement — options include (not decided, for discussion):
-- Accept the negative result as the project's finding and write it up (a rigorous,
-  honestly-reported negative result is itself a valid CV-quality deliverable — that was an
-  explicit goal from the start of the pivot).
-- Try a materially different scope (different `context_len`, different universe, a covariate
-  richer than daily candles via `algo_data`'s `tradestats`/`obstats`/`futoi`, a different
-  target horizon) — but any of these should be explicitly justified as a *new* experiment,
-  not a retry of Phase B chasing significance.
-- Pivot to Path B (AutoGluon fine-tuning) instead of further zero-shot screening — sketched
-  but never implemented; a fine-tuned model is a different question than "does zero-shot
-  Chronos-2 see anything," and isn't foreclosed by this result.
+**Phase C is in progress (session entry 18), proceeding despite Phase B's gate having
+FAILED (session entry 17).** Rationale: Phase B only ever tested a basket-wide average
+effect on a fixed 16-ticker sample; per-ticker breakdown showed zero individual signal
+anywhere in that sample (best cell DA=0.52, p=0.227 uncorrected), which is evidence against
+that specific sample, not against the broader "does any pair among 80 tickers show lead-lag
+structure" question Phase C asks. Full reasoning: `path_a/scratchpads/phase_c_scratch_pad.md`.
 
-**Carryover items** (unchanged, see Known gaps): `metric_window` enforcement (was scoped to
-Phase C, now on hold since C isn't funded), price-level covariates, Path B fine-tune wiring.
+Immediate next steps (user runs manually, per the established Phase B pattern):
+1. Run the widened 80-ticker AlgoPack pull (`algo_data/config.md`, already edited) —
+   `python3 -c "...algopack_pipeline.run('config.md')..."` from `algo_data/`.
+2. Check the pull's actual ticker coverage (some of the 80 may drop like X5/RAGR did).
+3. Run `basic_cells.ipynb` §14 (`pairwise_lagged_xcorr`/`select_pair_shortlist`) against the
+   discovery-window slice (2020-01-03→2023-06-30) to get the shortlist.
+4. If shortlist is non-empty: fill in `configs/phase_c_leadlag_confirm.yaml`'s `tickers:`
+   placeholder from the shortlist, run confirmation (2023-07-01→2024-12-30).
+5. If shortlist is empty: that's a complete, valid result per the pre-registered rule (see
+   scratchpad decision 5) — write up, do not loosen the shortlist threshold and re-run.
+
+**Also discussed and queued for after Phase C concludes** (not yet started): switch the
+screen to 1h bars (user's original intent) — sized as affordable within a 1-2 day compute
+budget, since AlgoPack's request count is driven by month-chunks not bar count, and Chronos
+compute stays at `context_len=250` bars (~28 trading days lookback, chosen deliberately
+short per the user's own concern that more lookback history can dilute rather than help) and
+`max_windows=400` (matching Phase B's test-family size). Also queued: report
+Pearson/quantile-loss alongside DA (near-zero marginal cost, reuses existing prediction
+output) since DA's binary-sign threshold may be masking real calibration/quantile skill.
+Covariate ablation (full vs none) was explicitly discussed and declined for this phase.
+
+**Carryover items** (unchanged, see Known gaps): price-level covariates, Path B fine-tune
+wiring.

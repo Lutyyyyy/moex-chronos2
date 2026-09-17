@@ -213,12 +213,45 @@ phases** instead of a linear stage sequence:
   actual joint-attention switch; prior stages (0-2) never set it, so Stage 2b's negative
   result was effectively a univariate baseline already — confirmed by Phase B's univariate
   arm landing at almost the same DA as Stage 2b.
-- **Phase C — lead-lag screening (gated on B). NOT FUNDED — Phase B's gate failed.**
-  Discovery-vs-confirmation time split; pairwise lagged cross-correlation of returns on the
-  discovery window only; BH-corrected shortlist; confirmation-only evaluation via
-  `run_stage` with `metric_window` finally enforced (closes the gap noted in
-  `current_state.md`'s Known gaps). Design only, per the plan's own gating rule — not to be
-  started unless the project's direction changes.
+- **Phase C — lead-lag screening across the full 80-ticker universe. IN PROGRESS
+  (2026-09-17), proceeding despite Phase B's gate failing.** Phase B only tested one
+  question — does grouping a fixed 16-ticker basket for *joint* forecasting beat
+  forecasting them independently (a basket-wide average effect). Per-ticker breakdown of
+  Phase B's own output (`runs/phase_b_univariate/metrics.csv`) showed no ticker with even a
+  hint of individual signal (best cell DA=0.52, p=0.227 uncorrected) — evidence of "nothing
+  in that specific 16-ticker sample," not evidence against "any pair among a much larger set
+  shows lead-lag structure," which Phase C was always designed to test. Full rationale in
+  `path_a/scratchpads/phase_c_scratch_pad.md`.
+  - **C1 (universe + data)**: `algo_data/config.md` `tickers.shares` widened 22→80 (full
+    `equity_universe.yaml`), `datasets`/`candles.intervals` unchanged (`[candles]`/`[1d]`).
+  - **C2 (discovery)**: `basic_cells.ipynb` §14 — `pairwise_lagged_xcorr()` (Pearson
+    correlation per ticker pair × lag 1–5 × direction, both `i` and `j` as potential leader,
+    on the discovery-window slice 2020-01-03→2023-06-30 only) + `select_pair_shortlist()`
+    (BH q<0.05, top-20 cap if oversubscribed by |r|). BH pattern copied verbatim from
+    `mcnemar_gate_test()` (§13), not reimplemented. Verified against a synthetic
+    lag-recovery test (injected `b = a.shift(2) + noise` among 8 noise tickers → correctly
+    recovered lag=2, correct leader, correctly the sole BH survivor) and a manual BH
+    cross-check on a toy p-value array.
+  - **C3 (confirmation)**: new `configs/phase_c_leadlag_confirm.yaml`, `group_mode:
+    multivariate`, confirmation window 2023-07-01→2024-12-30 (zero date overlap with
+    discovery — no `metric_window` machinery needed, the config's own `date_from`/
+    `date_till` IS the leakage guard; the earlier "`metric_window` parsed but not enforced"
+    known-gap was stale — it doesn't exist anywhere in `basic_cells.ipynb`, corrected in
+    `current_state.md`). `tickers:` filled in from C2's shortlist (placeholder `[]` until
+    then). Reuses `run_stage` unchanged. Per-pair success: BH-significant within
+    confirmation's own test family (not discovery's p-values) AND beats `last` baseline —
+    mirrors Phase B's three-part gate shape, applied per pair.
+  - **0 survivors at discovery is a pre-registered valid, complete result**, not a trigger to
+    loosen the shortlist rule — BH at q<0.05 across ~30k tests is designed so a true null
+    screen shows close to zero false positives.
+  - Next planned add-ons (not yet started, discussed 2026-09-17): switch to 1h bars
+    (`interval: 60`) once the daily-frequency screen above concludes — sized as affordable
+    within a 1-2 day compute budget (task/request count is driven by month-chunks, not bar
+    count, so the pull cost is comparable to the 80-ticker daily pull; Chronos compute stays
+    at `context_len=250` bars, i.e. ~28 trading days lookback, `max_windows=400`, same as
+    Phase B, to avoid diluting predictions with excess history); add Pearson/quantile-loss
+    reporting alongside DA (near-zero extra cost, reuses existing prediction output).
+    Covariate ablation (full vs none) considered and explicitly declined for this phase.
 - **Phase D — stretch backtest (gated on B or C). NOT FUNDED — both gating conditions
   failed/not attempted.** Toy, explicitly educational framing. Not
   designed yet.
