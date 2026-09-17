@@ -391,6 +391,47 @@ Snapshot for the next Claude instance. Picks up after the first successful Stage
       whether covariates capture any fragment of what drove that correlation — they don't.
     - Full writeup in `path_a/scratchpads/phase_c_1h_scratch_pad.md` ("Companion arm —
       univariate with covariates" section).
+25. **Phase E designed, implemented, and run — NULL RESULT (2026-09-17)**: after
+    reviewing the user's `docs/transient_dependency_research.md` (drafted with another
+    reasoning model) together, agreed scope for this pass: E1 (synthetic positive-control
+    validation) then E2 (event-conditioned leader/follower MVP), deferring experiments
+    E-H (dynamic networks, change-point-first, nonlinear/Hawkes methods, natural
+    experiments), 10-minute-or-finer resolution, and most mechanism-specific covariates
+    not already in `algo_data`.
+    - **Event-count floor derived via binomial power calculation** (not a guessed round
+      number): targeting a 65% same-direction follower-response rate vs. the 50%
+      no-relationship null (80% power, α=0.05) requires n≥85 qualifying leader-events per
+      candidate pair. Checked against real data before locking in: a one-sided 2σ
+      threshold on SBER's 1h discovery window gives ~72 expected events — close to but
+      under the floor, meaning the design would only be well-powered for liquid tickers.
+      In the actual run, 100% of the 11024 candidates cleared the floor, so this was not
+      a binding constraint in practice.
+    - **Built in `basic_cells.ipynb` §16**: `residualize_market_factor` (extracted from
+      §14's `pairwise_lagged_xcorr` for reuse — one implementation, not two),
+      `detect_leader_events` (causal, trailing-window-only), `event_conditioned_response`,
+      `block_permute_panel`, `scan_pair_family`, `bh_correct`, plus E1's synthetic-panel
+      generator/injector and both validation tests. E1's assertions run automatically
+      every time the notebook is sourced — E2's functions are structurally unreachable
+      without E1 passing first, not just conventionally gated.
+    - **E1 (synthetic validation) — both tests pass.** Injected-burst power test (20
+      trials, 76-ticker synthetic panels matching real scale): `detection_rate=1.0`,
+      `mean_abs_frac_error=0.031`. Null false-alert-rate test (20 trials × 380 pairs, pure
+      null): 0/7600 BH-significant hits. One real bug caught and fixed during development:
+      an early `inject_burst` used a non-causal event definition that disagreed with what
+      the real detector scans for, diluting measured detection rate to ~20% and making a
+      working detector look broken — fixed by making injection use the exact same
+      causal/residualized event definition as detection.
+    - **E2 (event-conditioned MVP) — run on real 1h data, NULL at discovery.**
+      `runner.ipynb` §2c/§2d (pandas-only, no Chronos). Same discovery/confirmation date
+      split as Phase C's 1h follow-on, but a fresh candidate pool (every ordered pair
+      among the 53/76 tickers surviving coverage, not Phase C's shortlist — different
+      mechanism). 11024 candidate (leader, follower, lag) tests, **0/11024
+      BH-significant at q<0.05**. Confirmation stage not reached (nothing to confirm) —
+      itself the complete pre-registered result, not a partial one.
+    - **Fifth independent negative result** (Stage 2b, Phase B, Phase C daily, Phase C
+      1h, now Phase E) — and the first to test a genuinely different hypothesis shape
+      (event-conditioned causal detection vs. full-sample aggregate correlation/DA).
+      Full writeup: `path_a/scratchpads/phase_e_scratch_pad.md`.
 
 ## Stages (Path A) — retired scheme, historical record only (see entry 15)
 
@@ -440,26 +481,28 @@ Snapshot for the next Claude instance. Picks up after the first successful Stage
 
 ## Suggested next session
 
-**All currently-planned Path A work is concluded — four independent negative results**
-(Stage 2b, Phase B, Phase C daily, Phase C 1h follow-on; session entries 14/17/18-20/23).
-Quantile-loss metric work is done (entry 21). Per the user's explicit sequencing (entry 22),
-the next phase is designing **Phase E** (burst/non-stationary lead-lag detection) — detection
-only, not exploitation. Groundwork already collected in
-[`transient_dependency_research.md`](transient_dependency_research.md) (candidate mechanisms,
-experiment sketches, statistical safeguards, proposed sequence) — start there rather than
-from scratch.
+**All currently-planned work is concluded — five independent negative results**
+(Stage 2b, Phase B, Phase C daily, Phase C 1h follow-on, Phase E; session entries
+14/17/18-20/23/25). Phase E specifically tested the user's "bursty, non-stationary
+dependency" hypothesis with a validated (E1-checked) causal event-conditioned detector on
+real 1h data — 0/11024 candidates significant at discovery, confirmation not reached.
 
-Fine-tuning (Path B) decision is still deferred — four negative results across two
-frequencies (daily, 1h) and two test designs (basket gate, pairwise lead-lag) now rule out
-"wrong metric," "wrong frequency," and "too narrow a ticker sample" as explanations, which
-strengthens the case against prioritizing fine-tuning (per the skeptical assessment in entry
-21) but the decision itself hasn't been revisited yet — worth doing once Phase E's design is
-underway, not blocking it.
-
-Also outstanding: the "1" from entry 21 ("I definitely want 1 and 2 to take") — a full
-writeup of all negative (and any positive) results as a standalone deliverable. Not yet
-started as its own artifact; current results live in scratchpads/docs but no consolidated
-writeup exists.
+Immediate open decision: **what's next**, now that both the "does structure exist in
+aggregate" question (Stage 2b/B/C) and the "does it exist in short causal bursts" question
+(Phase E) have been tested and come back null. Options, not yet decided:
+- Write up all five negative results as the project's deliverable (entry 21's "1" from "I
+  definitely want 1 and 2 to take" — still not started as its own artifact).
+- Design a specific, justified Phase E variant with its own fresh pre-registration
+  (different `threshold_std`, regime-conditioning, volume-conditioning, or finer
+  resolution) — per `phase_e_scratch_pad.md`'s Interpretation section, none of these
+  should be tried as an immediate retry of the same test with a loosened knob; each needs
+  its own justification, not just "try again."
+- Revisit the fine-tuning (Path B) decision — five negative results across two frequencies,
+  three test designs (basket gate, pairwise lead-lag, event-conditioned burst), now rule
+  out "wrong metric," "wrong frequency," "too narrow a ticker sample," and "wrong
+  hypothesis shape (aggregate vs. bursty)" as explanations, which further strengthens the
+  case against prioritizing fine-tuning (entry 21's skeptical assessment) but the decision
+  itself still hasn't been formally revisited.
 
 **Carryover items** (unchanged, see Known gaps): price-level covariates, Path B fine-tune
 wiring.

@@ -314,6 +314,38 @@ phases** instead of a linear stage sequence:
 - **Phase D — stretch backtest (gated on B or C). NOT FUNDED — both gating conditions
   failed/not attempted.** Toy, explicitly educational framing. Not
   designed yet.
+- **Phase E — event-conditioned burst detection. ✅ concluded, NULL RESULT
+  (2026-09-17).** Different hypothesis than Phases B/C: dependencies may occur in
+  short bursts a full-sample correlation/DA number averages away, rather than
+  holding across the whole sample. Detection-only goal (not exploitation), full
+  design rationale and deferred experiment families in
+  `docs/transient_dependency_research.md`. Scope for this pass: E1 (synthetic
+  positive-control validation) then E2 (event-conditioned leader/follower MVP),
+  deferring 10-minute-or-finer resolution and every experiment family beyond
+  event-conditioning.
+  - **E1 (synthetic validation) — done, both tests pass.** `basic_cells.ipynb` §16:
+    injected-burst power test (20 trials, 76-ticker synthetic panels matching real
+    scale, known 75%-same-direction relationship) — `detection_rate=1.0`,
+    `mean_abs_frac_error=0.031`. Null false-alert-rate test (20 trials × 380 pairs,
+    pure-null synthetic panels) — 0/7600 BH-significant hits, well under the
+    nominal 5% ceiling. Runs automatically every time `basic_cells.ipynb` is
+    sourced; E2's real-data functions are unreachable without E1 passing first.
+  - **E2 (event-conditioned MVP) — done, NULL at discovery.** `runner.ipynb`
+    §2c/§2d, pandas-only (no Chronos). Mechanism: leader's residualized return
+    exceeds a 2σ trailing (causal) threshold → check follower's residualized
+    return same-direction response `lag`∈{1,2,3,4} bars later, binomial test
+    against the 50% null. Event-count floor n≥85 per candidate, derived via
+    binomial two-proportion power calculation (65% target effect, 80% power,
+    α=0.05) — see `basic_cells.ipynb` §16 header for the derivation. Same
+    discovery/confirmation split as Phase C's 1h follow-on (2023-01-02→2024-05-24
+    discovery, 2024-05-27→2024-12-30 confirmation), reusing the date split but not
+    the ticker shortlist (different mechanism). 53/76 tickers survived the
+    coverage guard, 2919 discovery bars, 11024 candidate (leader, follower, lag)
+    tests, 100% cleared the event floor. **0/11024 BH-significant at q<0.05** —
+    confirmation stage not reached (nothing to confirm), which is itself the
+    complete pre-registered result. **Fifth independent negative result**
+    (Stage 2b, Phase B, Phase C daily, Phase C 1h, now Phase E). Full writeup in
+    `path_a/scratchpads/phase_e_scratch_pad.md`.
 
 New configs use `phase_<letter>_<name>.yaml` naming (e.g. `phase_b_multivariate.yaml`,
 `phase_b_univariate.yaml`). Full phase-by-phase design lives in the local pivot plan
