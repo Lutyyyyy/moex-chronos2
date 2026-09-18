@@ -3,12 +3,12 @@
 **Headline result: a rigorous, replicated null.** Across ~10 independent axes — universe
 composition, time resolution (daily / 1h / 10m), grouping (multivariate vs. univariate
 attention), price adjustment (raw close vs. dividend/split-adjusted), context length
-(35 / 250 bars), sector homogeneity, and cross-ticker lead-lag structure — zero-shot
-Chronos-2 shows no directional edge on MOEX equity returns beyond chance. Every gate,
-pre-registered before the run, failed. This document reports that result and the
-methodology behind it, because for a study like this the methodology *is* the
-contribution: the value isn't "did it make money," it's whether the process would have
-caught a real edge if one had been there.
+(a full log-spaced sweep: 35 / 100 / 250 bars), sector homogeneity, and cross-ticker
+lead-lag structure — zero-shot Chronos-2 shows no directional edge on MOEX equity returns
+beyond chance. Every gate, pre-registered before the run, failed. This document reports
+that result and the methodology behind it, because for a study like this the methodology
+*is* the contribution: the value isn't "did it make money," it's whether the process would
+have caught a real edge if one had been there.
 
 ## Why this is a meaningful negative result, not just "it didn't work"
 
@@ -25,10 +25,12 @@ things earn that here:
 - **Discovery/confirmation splits with verified non-overlapping dates**, for every
   hypothesis-generating step (lead-lag pair screening). Candidates are never evaluated on
   the data used to find them.
-- **A caught methodology bug**, not just a clean pipeline. The lead-lag discovery step
+- **Caught methodology traps, not just a clean pipeline.** The lead-lag discovery step
   initially produced a shortlist dominated by one spurious pattern; the bug was found,
-  diagnosed, and fixed before any confirmation run used the flawed shortlist (details
-  below).
+  diagnosed, and fixed before any confirmation run used the flawed shortlist. Later, the
+  context-length sweep independently produced one BH-significant ticker at exactly one of
+  three tested context lengths — checked against the other two, where it's null, rather
+  than reported as a discovery. Both are the same lesson, caught twice (details below).
 
 ## Method
 
@@ -90,16 +92,19 @@ here it caught something real before it reached the confirmation stage.
 | Config | n windows | Cells (ticker×horizon) | BH-significant | Aggregate ΔDA | Gate |
 |---|---:|---:|---:|---:|---|
 | Daily, ctx=250 | 400 | 64 | 0 | −0.0011 | FAIL |
+| Daily, ctx=100 | 400 | 64 | 0 | −0.0005 | FAIL |
 | Daily, ctx=35 | 400 | 64 | 0 | −0.0001 | FAIL |
 | 1h, ctx=250 | 400 | 64 | 0 | +0.0003 | FAIL |
+| 1h, ctx=100 | 400 | 64 | 0 | +0.0018 | FAIL |
 | 1h, ctx=35 | 400 | 64 | 0 | +0.0014 | FAIL |
 | 10-minute, ~2mo window (2023) | 400 | 64 | 0 | −0.0010 | FAIL |
 | 10-minute, ~2mo window (2024) | 400 | 64 | 0 | +0.0010 | FAIL |
 
-Six independent runs, across three resolutions and two context lengths. In every case,
-aggregate ΔDA is within noise of zero (|ΔDA| ≤ 0.0014) and zero of the 64 tested cells
-survives BH correction. Multivariate and univariate arms are not just "not significantly
-different" — they track each other almost window-by-window.
+Eight independent runs, across three resolutions and a full log-spaced context-length sweep
+(35 → 100 → 250 bars). In every case, aggregate ΔDA is within noise of zero
+(|ΔDA| ≤ 0.0018) and zero of the 64 tested cells survives BH correction. Multivariate and
+univariate arms are not just "not significantly different" — they track each other almost
+window-by-window.
 
 **Lead-lag confirmation (discovery → confirmation, close_adj):**
 
@@ -111,32 +116,63 @@ different" — they track each other almost window-by-window.
   does not survive BH correction (p_bh=0.70). Several pairs' correlation sign flips
   entirely out-of-sample (e.g. AFLT→PHOR, lag 2: r=−0.217 in discovery → r=−0.066 in
   confirmation) — the exact failure mode a discovery/confirmation split exists to catch.
-- Basket-wide Chronos-2 run on the same 18-ticker shortlist: 135 windows, mean DA 0.501,
-  0/72 cells BH-significant.
+- Basket-wide Chronos-2 run on the same 18-ticker shortlist at three context lengths — 35,
+  100, and 250 bars — mean DA 0.49–0.50 at all three, and 0/72 cells BH-significant at
+  ctx=35 and ctx=250. ctx=100 is the one exception — see below.
 
 This pattern — real correlations at discovery, disappearing under out-of-sample
 BH-corrected re-test — repeated across every resolution tried (daily, 1h, and the earlier
 raw-close version of this same test).
 
+**A second false positive, caught the same way, at ctx=100.** The ctx=100 basket-wide run
+was the one exception to "0/72 cells significant": UNAC came back BH-significant at all
+four evaluated horizons (DA 0.60–0.64, p_bh as low as 0.0002), and its DA at every horizon
+beats every baseline (`last`, `momentum5`, `ar1`, all ≤0.56). Taken alone, that clears every
+leg of this project's own pre-registered per-pair gate. But UNAC is on the confirmation
+shortlist precisely because it is also tested at context lengths 35 and 250 on the identical
+ticker, tickers, and confirmation window — and it is null at both:
+
+| context_len | n windows | UNAC DA (h1) | p (BH-corrected) |
+|---|---:|---:|---:|
+| 35 | 350 | 0.523 | 0.9998 |
+| 100 | 285 | 0.635 | 0.0002 |
+| 250 | 135 | 0.585 | 0.5210 |
+
+One significant result out of three independent context-length variants of the same test is
+exactly the base rate expected if UNAC has no real relationship and each context length is
+its own BH-controlled trial — BH controls the false-discovery *rate* within one family, not
+the chance that zero of several independently-run families produce a false positive. Treated
+as a genuine discovery, this would have been this project's one positive result. Treated
+correctly — as one hit among the three context-length variants that were, in effect, a third
+layer of unconnected testing on top of the pair-level and cell-level families already
+BH-corrected — it's a second real demonstration of the same lesson the original
+market-factor bug taught: a result that looks strong on its own numbers needs to survive
+being checked against every other angle the project already ran on the same data before it's
+trusted.
+
 **Sector baskets** (4 sectors — oil & gas, metals & mining, financials, utilities — ×
-{daily, 1h} × {context 35, 250} = 16 configs, same McNemar gate as the basket-gate family):
+{daily, 1h} × {context 35, 100, 250} = 24 configs, same McNemar gate as the basket-gate
+family):
 
 | Sector | Resolution/ctx | BH-sig cells | Gate |
 |---|---|---:|---|
 | Oil & gas | 1h, ctx=250 | 1/48 (ΔDA negative) | FAIL |
-| all other 15 combinations | — | 0/N | FAIL |
+| all other 23 combinations | — | 0/N | FAIL |
 
 Restricting to a single, economically homogeneous sector — the natural follow-up to "maybe
-Phase B's deliberately cross-sector basket hid a same-sector effect" — does not change the
-outcome. One cell across all 16 × ~40 tested cells reached BH significance, and even there
-the gate's other conditions (aggregate ΔDA > 0) failed, which is the multi-part gate
-criterion doing exactly what it's for: a lone significant cell in a large family is exactly
-what you'd expect by chance, and the gate doesn't let it through alone.
+the basket gate's deliberately cross-sector basket hid a same-sector effect" — does not
+change the outcome, at any of the three context lengths tested. One cell across all 24 ×
+~40 tested cells reached BH significance, and even there the gate's other conditions
+(aggregate ΔDA > 0) failed, which is the multi-part gate criterion doing exactly what it's
+for: a lone significant cell in a large family is exactly what you'd expect by chance, and
+the gate doesn't let it through alone.
 
 **Resolution and context-length sweep.** Combining all of the above: the null holds at
-daily, hourly, and 10-minute resolution, and at both short (35-bar, ≈7 trading weeks) and
-long (250-bar, ≈1 trading year) context lengths. No resolution or context choice recovered
-a signal any other choice missed.
+daily, hourly, and 10-minute resolution, and across a full log-spaced sweep of context
+length — 35 bars (≈7 trading weeks), 100 bars (≈20 weeks), and 250 bars (≈1 trading year).
+No resolution or context choice recovered a signal any other choice missed; the one
+apparent exception (UNAC at ctx=100, above) is exactly the kind of isolated hit this sweep
+was designed to be able to catch and correctly reject.
 
 ## Two additional checks, run directly against the pooled run data
 
@@ -208,8 +244,6 @@ scoped decision rather than a hidden loose end.
   open, more promising direction: Chronos-2's quantile output could in principle be
   recalibrated for volatility forecasting without the same overfitting risk directional
   fine-tuning carries. Not attempted here.
-- **The context_len=100 sweep point** (log-spaced midpoint between the 35 and 250 bar
-  configs already run) is staged as configs but not yet executed at time of writing.
 
 ## Engineering notes
 
