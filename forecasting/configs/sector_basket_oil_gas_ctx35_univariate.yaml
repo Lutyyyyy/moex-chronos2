@@ -1,0 +1,80 @@
+# CTX35 VARIANT (daily): identical to sector_basket_oil_gas_univariate.yaml except
+# context_len: 35 (was default/unset -> effectively inherited from base config's
+# absence, now explicit) and price_col: close_adj (base sector configs default to raw
+# close). See configs/basket_gate_daily_adj_ctx35_multivariate.yaml's header for the full
+# ctx35 rationale (short locally-relevant context vs the ~1yr context250 convention).
+# Ticker list/dates/indexes/futures unchanged from the pre-registered design in
+# scratchpads/phase_sector_scratch_pad.md.
+#
+stage_id: sector_basket_oil_gas_ctx35_univariate
+notes: "Sector-basket experiment (oil_gas, 12 tickers): does Chronos-2 multivariate\n\
+  \  cross-attention show real predictive skill when the basket is economically related\n\
+  \  (same sector) rather than Phase B's deliberately cross-sector, liquidity-diverse\n\
+  \  16-ticker basket? User's hypothesis: cross-attention might benefit from real\n\
+  \  economic relatedness between series, which a diverse cross-sector basket may\
+  \ be a\n  worst-case test for. Not a retry of Phase B -- same mechanism/metrics,\
+  \ deliberately\n  different (homogeneous) basket composition. Sector classification\
+  \ verified via\n  research agent 2026-09-17 (MOEX/company sources), not guessed\
+  \ -- see\n  forecasting/scratchpads/phase_sector_scratch_pad.md for the full sector map\
+  \ and\n  verification notes (flagged uncertainties: AFKS/SFIN excluded as diversified\n\
+  \  conglomerates, WUSH/DELI both tagged transport for labeling consistency per the\n\
+  \  research agent's flag, ENPG/RUAL are financially linked -- not independent\n\
+  \  diversification within metals_mining).\n  Pair with sector_basket_oil_gas_ctx35_multivariate.yaml:\
+  \ identical except group_mode,\n  matching Phase B's paired-arm pattern for mcnemar_gate_test\
+  \ (§13)."
+data_source: algopack
+algopack_processed_path: data_pipeline/data/processed/candles_1d/shares.parquet
+min_ticker_coverage: 0.9
+price_col: close_adj
+group_mode: univariate
+interval: 24
+date_from: '2020-01-03'
+date_till: '2024-12-30'
+tickers:
+- GAZP
+- ROSN
+- LKOH
+- NVTK
+- TATN
+- SNGS
+- SNGSP
+- TATNP
+- SIBN
+- RNFT
+- BANEP
+- TRNFP
+indexes:
+- IMOEX
+- MOEXOG
+- MOEXMM
+- MOEXFN
+- RGBI
+futures_proxies:
+- BR
+- Si
+- GD
+context_len: 35
+horizon: 5
+quantiles:
+- 0.1
+- 0.5
+- 0.9
+walk_forward:
+  shift: 1
+  max_windows: 400
+covariates: full
+eval_horizons:
+- 1
+- 2
+- 3
+- 5
+primary_horizons:
+- 2
+- 3
+- 5
+baselines:
+- zero
+- last
+- momentum5
+- ar1
+output_dir: runs

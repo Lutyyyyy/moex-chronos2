@@ -1,0 +1,125 @@
+# Phase B, 10-minute follow-on — 2024 chunk, multivariate arm
+# Mirrors phase_b_multivariate.yaml (archive/concluded_stages/) exactly except interval=10,
+# the algopack path, price_col=close_adj, and a shortened date range (see below). Pair with
+# basket_gate_10m_2024_univariate.yaml: identical in every field except group_mode. Same
+# McNemar-gate pairing requirement as the original Phase B -- do not edit
+# context_len/tickers/date range in one without mirroring it in the other.
+#
+# Why a shortened range, not the full 2020-2024 span: the first attempt at this 10-minute
+# follow-on used the full 5-year range and stalled at ~147s/it fetching indexes/futures from
+# ISS (e.g. IMOEX at interval=10 over 2020-2024 = 67,378 rows -- no 10m cache existed yet for
+# indexes/futures). Verified against real cached parquet row counts: Phase C's already-run 1h
+# confirm (archive/concluded_stages/phase_c_leadlag_1h_confirm.yaml, interval=60,
+# 2024-05-27->2024-12-30, 217 days) fetched 1403 rows/series for IMOEX (6.47 rows/day). This
+# 10m chunk targets a comparable per-series row count with a safety margin: at the observed
+# 10m rate (36.96 rows/day, from the failed full-range attempt's 67,378 rows / 1823 days), a
+# ~61-day window gives ~2255 rows/series (~1.6x the 1h run's total, deliberate safety margin
+# per user's explicit choice 2026-09-17 -- "round up to ~60 days for safety margin" over the
+# exact ~38-day match). Two such chunks are run independently (this one in 2024, a matching
+# one in 2023 -- phase_b_10m_2023_*.yaml) rather than one continuous 2-year window, per user's
+# explicit choice to compare across two separate years.
+#
+# Rationale for reusing Phase B's exact ticker list/context_len/horizon/windows rather than
+# re-deriving them for 10m: this is meant as a genuinely comparable resolution follow-on (does
+# the same question -- multivariate vs univariate forecasting skill -- come out differently
+# at 10-minute bars?), not a new hypothesis. User's explicit choice 2026-09-17: mirror Phase B
+# exactly rather than scaling context_len to preserve calendar-time lookback.
+#
+# This is also the first real use of `close_adj` (dividend/split-adjusted prices, added to
+# data_pipeline 2026-09-17 -- see data_pipeline/current_state.md and data_pipeline/docs/usage.md §4) via
+# forecasting's new `price_col` config key (lib.ipynb's build_price_panel/assemble_panels).
+# All five prior negative results (Stage 2b, Phase B, Phase C daily+1h, Phase E daily+1h) used
+# raw unadjusted close and are NOT being re-run -- this 10m test is the first experiment to
+# run on adjusted data, going forward only, per the user's explicit decision.
+stage_id: basket_gate_10m_2024_multivariate
+notes: >
+  10-minute follow-on to Phase B's daily gate (FAILED 2026-09-17) and Phase C's
+  daily/1h lead-lag screens (both FAILED). Same multivariate-vs-univariate
+  question as Phase B, at the finest native ISS/AlgoPack interval, on
+  close_adj (first experiment to use the new dividend/split adjustment).
+  This is the 2024 chunk of a two-chunk (2023 + 2024) 10-minute smoke test,
+  run on a shortened ~61-day window per-chunk after the full 5-year range
+  proved too slow to fetch (see header comment). Gate passes iff aggregate
+  ΔDA > 0 AND ≥1 BH-significant cell favoring multivariate AND multivariate
+  still beats baselines -- same three-part criterion as every prior gate in
+  this project.
+
+data_source: algopack
+algopack_processed_path: data_pipeline/data/processed/candles_10m/shares.parquet
+price_col: close_adj
+min_ticker_coverage: 0.9
+
+group_mode: multivariate
+
+interval: 10
+date_from: "2024-06-01"
+date_till: "2024-07-31"
+# ~61 calendar days -- sized to match Phase C 1h confirm's total per-series row count with a
+# ~1.6x safety margin (see header comment for the row-rate derivation). NOT the full 2020-2024
+# range used by every prior phase in this project -- this is a deliberately narrowed smoke
+# test, not a comparable-power replication of Phase B's window count.
+
+tickers:
+  - GAZP
+  - SMLT
+  - SBER
+  - ROSN
+  - MTSS
+  - LKOH
+  - T
+  - OZON
+  - PLZL
+  - VTBR
+  - YDEX
+  - VKCO
+  - GMKN
+  - MAGN
+  - AFKS
+  - MGNT
+  - PHOR
+  - AFLT
+  - IRAO
+  - FEES
+  - MDMG
+  - LENT
+  # 22 configured; min_ticker_coverage=0.9 dropped LENT/MDMG/OZON/SMLT/VKCO/YDEX at
+  # build_price_panel time for the daily Phase B run (verified 2026-09-17) -- same
+  # short-history/recent-listing tickers, left in rather than pre-trimmed so a coverage
+  # threshold change picks them back up automatically. On this ~61-day window, MORE tickers
+  # than that may fail the coverage guard purely from having a shorter observation window --
+  # check the actual build_price_panel drop log when this runs, don't assume the daily run's
+  # drop list still applies.
+
+indexes:        [IMOEX, MOEXOG, MOEXMM, MOEXFN, RGBI]
+futures_proxies: [BR, Si, GD]
+# NOTE: indexes/futures_proxies come from the ISS live cache (not data_pipeline), fetched at
+# `interval` above. ISS serves 10m natively for shares/indexes/FORTS (confirmed --
+# data_pipeline/.claude/CLAUDE.md, load_config's own interval assert allows 10/60/24, no 15m
+# anywhere). No 10m cache exists yet for these as of writing this config for this date range
+# (only interval=24/60 parquets, plus a full-2020-2024-range 10m fetch abandoned mid-run, seen
+# in moex_cache/ so far) -- this run's first §2 prefetch step will hit the network for real.
+
+context_len: 250   # bars, not calendar time -- ~35 trading hours lookback at 10m (~50
+                    # bars/session), deliberately mirroring Phase B's daily context_len
+                    # verbatim rather than scaling for calendar-comparable lookback (user's
+                    # explicit choice) -- keeps this a clean same-question-different-
+                    # resolution comparison, not a second new variable. At ~61 calendar days
+                    # (~43 trading days, ~2150 bars total at 10m), this leaves roughly
+                    # ~1900 bars for scorable windows after the 250-bar warmup.
+horizon: 5          # ~50 min ahead
+quantiles: [0.1, 0.5, 0.9]
+
+walk_forward:
+  shift: 1
+  max_windows: 400   # same test-family size as every other phase in this project -- likely
+                      # not reached on this shortened window; actual window count will be
+                      # closer to (bars_after_warmup / shift), check run_stage's own printed
+                      # panel shape when this runs.
+
+covariates: full
+
+eval_horizons:    [1, 2, 3, 5]
+primary_horizons: [2, 3, 5]
+baselines: [zero, last, momentum5, ar1]
+
+output_dir: runs

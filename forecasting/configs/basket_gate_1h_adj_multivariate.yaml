@@ -1,0 +1,88 @@
+# Phase B, close_adj follow-on — 1h, multivariate arm
+# Phase B was never previously run at 1h resolution (only Phase C's lead-lag screen was,
+# at 1h -- phase_c_leadlag_1h_confirm.yaml). This is a genuinely new gate run: same
+# multivariate-vs-univariate question as daily Phase B, same 22-ticker basket/
+# context_len/horizon/windows, at 1h bars, on close_adj. Pair with
+# basket_gate_1h_adj_univariate.yaml: identical except group_mode.
+#
+# Date range: reuses Phase C's already-validated 1h confirmation window
+# (archive/concluded_stages/phase_c_leadlag_1h_confirm.yaml, 2024-05-27..2024-12-30, 217
+# days, ~1403 rows/series for IMOEX) rather than re-deriving a new one -- this window is
+# known to fetch cleanly from ISS cache at interval=60 and gives a comparable per-series
+# row count to the previously-run 1h experiment in this project. NOT the full 2020-2024
+# daily range (would be ~8x the row count at 1h, no established precedent that it fetches
+# in reasonable time -- see the 10m follow-on's fetch-stall lesson, docs/current_state.md
+# 2026-09-17).
+stage_id: basket_gate_1h_adj_multivariate
+notes: >
+  Phase B gate, 1h + close_adj: does grouping many series for Chronos-2 to
+  forecast JOINTLY beat forecasting each independently, at 1h resolution on
+  adjusted prices? First-ever 1h run of the Phase B gate itself (Phase C's 1h
+  work was the lead-lag screen, a different question). Gate passes iff
+  aggregate ΔDA > 0 AND ≥1 BH-significant cell favoring multivariate AND
+  multivariate still beats baselines.
+
+data_source: algopack
+algopack_processed_path: data_pipeline/data/processed/candles_1h/shares.parquet
+price_col: close_adj
+min_ticker_coverage: 0.9
+
+group_mode: multivariate
+
+interval: 60
+date_from: "2024-05-27"
+date_till: "2024-12-30"
+
+tickers:
+  - GAZP
+  - SMLT
+  - SBER
+  - ROSN
+  - MTSS
+  - LKOH
+  - T
+  - OZON
+  - PLZL
+  - VTBR
+  - YDEX
+  - VKCO
+  - GMKN
+  - MAGN
+  - AFKS
+  - MGNT
+  - PHOR
+  - AFLT
+  - IRAO
+  - FEES
+  - MDMG
+  - LENT
+  # 22 configured; min_ticker_coverage=0.9 dropped LENT/MDMG/OZON/SMLT/VKCO/YDEX at
+  # the daily interval -- on this shorter 217-day window, MORE tickers may fail the
+  # coverage guard purely from having a shorter observation window. Check the actual
+  # build_price_panel drop log when this runs, don't assume the daily drop list applies.
+
+indexes:        [IMOEX, MOEXOG, MOEXMM, MOEXFN, RGBI]
+futures_proxies: [BR, Si, GD]
+# indexes/futures_proxies come from the ISS live cache (not data_pipeline) at interval=60 --
+# already fetched for this exact date range by phase_c_leadlag_1h_confirm.yaml, so this
+# should hit local cache, not the network.
+
+context_len: 250   # bars, not calendar time -- mirrors Phase B daily's context_len
+                    # verbatim (same convention used for the 10m follow-on) rather than
+                    # scaling for calendar-comparable lookback -- keeps this a clean
+                    # same-question-different-resolution comparison.
+horizon: 5
+quantiles: [0.1, 0.5, 0.9]
+
+walk_forward:
+  shift: 1
+  max_windows: 400   # likely not reached on this 217-day window; actual count closer to
+                      # (bars_after_warmup / shift) -- check run_stage's printed panel shape.
+
+covariates: full
+
+eval_horizons:    [1, 2, 3, 5]
+primary_horizons: [2, 3, 5]
+baselines: [zero, last, momentum5, ar1]
+
+output_dir: runs

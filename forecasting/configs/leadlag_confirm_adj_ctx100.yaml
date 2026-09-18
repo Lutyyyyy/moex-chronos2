@@ -1,0 +1,89 @@
+# CTX100 VARIANT: identical to leadlag_confirm_adj.yaml except context_len: 100 (was 250). Middle data
+# point for a LOG-SPACED 3-point context-length sweep: 35 -> 100 -> 250 (geometric
+# midpoint of 35 and 250 is sqrt(35*250)~=93; 100 is the nearest round number, replacing
+# an earlier context_len=60 choice that was closer to 35 than to 250 on a log scale --
+# user's explicit correction 2026-09-18). Same bar count at daily and 1h (100 bars = ~20
+# trading weeks daily, ~12.5 trading days at 1h) per the same bar-count-parity convention
+# used for context_len=35/250 throughout this project. Existing (already-cached) date
+# ranges comfortably support context_len=100 (verified: both the daily 2020-2024 range
+# and the 1h 2024-05-27..2024-12-30 range support context_len up to 35 with room to
+# spare, so 100 is also fine), so no new date range needed -- every other field unchanged
+# from leadlag_confirm_adj.yaml. NOTE: per the user's explicit sequencing, this batch is meant to run AFTER
+# the main portfolio repo is pushed to GitHub, not before -- see docs/current_state.md
+# session entry / the project plan file for context.
+#
+# Phase C — close_adj follow-on, daily confirmation arm
+# Runs Chronos-2 (group_mode: multivariate) ONLY on the 18 tickers that appear in the
+# close_adj-rerun discovery shortlist (residualized `pairwise_lagged_xcorr`, run
+# 2026-09-17 on close_adj instead of raw close -- 20 BH-significant pairs, q<0.05,
+# top_n=20 cap, same discovery window as the original run: 2020-02-21..2023-06-30 after
+# the coverage-guard inner join). NOT the same 18 tickers as the original raw-close
+# confirmation (archive/concluded_stages/phase_c_leadlag_confirm.yaml) -- close_adj
+# discovery surfaced a partially different shortlist (see scratch pad for the full
+# table); this is a genuinely fresh discovery+confirmation pair, not a parameter reuse.
+#
+# Confirmation window strictly AFTER the discovery window (2023-07-01..2024-12-30, same
+# split point as the original raw-close run) so this is a real out-of-sample test.
+stage_id: leadlag_confirm_adj_ctx100
+notes: >
+  Phase C confirmation, close_adj rerun: does Chronos-2 (cross_learning=True)
+  show real predictive skill, out-of-sample, on the specific ticker pairs that
+  the close_adj discovery screen flagged as BH-significant (q<0.05, top-20
+  cap)? Per-pair success requires the pair's cells to be BH-significant
+  WITHIN this confirmation run's own test family (not reusing discovery
+  p-values) AND beat the `last` baseline -- same three-part gate shape as
+  Phase B, applied per pair. The original raw-close version of this test
+  FAILED 2026-09-17 (0 pairs confirmed).
+
+data_source: algopack
+algopack_processed_path: data_pipeline/data/processed/candles_1d/shares.parquet
+price_col: close_adj
+min_ticker_coverage: 0.9
+
+group_mode: multivariate
+
+interval: 24
+date_from: "2023-07-01"
+date_till: "2024-12-30"
+
+tickers:
+  # Union of ticker_i/ticker_j from the close_adj discovery shortlist (2026-09-17,
+  # 20 BH-significant (pair, lag, direction) tests, q<0.05, top_n=20 cap -- see
+  # scratchpad for the full table).
+  - AFLT
+  - BANEP
+  - BSPB
+  - CBOM
+  - FEES
+  - GMKN
+  - IRAO
+  - IRKT
+  - MSRS
+  - MTLRP
+  - PHOR
+  - RASP
+  - RUAL
+  - SBERP
+  - SNGSP
+  - UNAC
+  - UPRO
+  - VTBR
+
+indexes:        [IMOEX, MOEXOG, MOEXMM, MOEXFN, RGBI]
+futures_proxies: [BR, Si, GD]
+
+context_len: 100
+horizon: 5
+quantiles: [0.1, 0.5, 0.9]
+
+walk_forward:
+  shift: 1
+  max_windows: 400
+
+covariates: full
+
+eval_horizons:    [1, 2, 3, 5]
+primary_horizons: [2, 3, 5]
+baselines: [zero, last, momentum5, ar1]
+
+output_dir: runs

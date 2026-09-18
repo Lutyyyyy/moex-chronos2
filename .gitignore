@@ -1,6 +1,6 @@
 # --- Excluded sub-workspaces / unrelated subprojects ---
 .claude/
-!algo_data/.claude/
+!data_pipeline/.claude/
 .obsidian/
 Clippings/
 tunnels/
@@ -13,13 +13,32 @@ repo_res/
 *.pdf
 
 # --- Generated experiment artifacts ---
-# Matches both the repo-root runs/ (pre path_a/ reorg configs) and path_a/runs/ (current
-# configs, output_dir: runs resolved relative to path_a/ as cwd) -- nothing under either is
-# tracked; result numbers belong in the relevant scratchpad .md, not raw run output.
+# Matches both the repo-root runs/ (pre-reorg configs) and forecasting/runs/ (current
+# configs, output_dir: runs resolved relative to forecasting/ as cwd) -- nothing under either
+# is tracked; result numbers belong in the relevant scratchpad .md, not raw run output.
 .tmp.driveupload/
 tmp/
 runs/
-path_a/runs/
+forecasting/runs/
+
+# --- Paused/unfinished parallel track, kept local-only (2026-09-18) ---
+# AutoGluon fine-tuning experiment: raw, outdated, not being actively worked on. Kept on disk
+# for reference but deliberately not published. Open blocker: intraday AutoGluon
+# index-alignment bug, no plan to resume it.
+finetuning_wip/
+
+# --- Historical/archived material, kept local-only (2026-09-18) ---
+# User's explicit choice: no archive material of any kind goes to GitHub, even though it's
+# real historical record (old raw-close pre-close_adj runs, old numbered stage_N configs,
+# legacy notebooks, superseded session-log docs). Kept on disk for local reference only.
+docs/archive/
+forecasting/archive/
+data_pipeline/archive/
+
+# --- Working/process notes, kept local-only (2026-09-18) ---
+# Same reasoning as archive/ above -- pre-registration + run-log scratchpads are working
+# process notes, not polished reader-facing content. Real results go in FINDINGS.md instead.
+forecasting/scratchpads/
 
 # --- Pasted Obsidian images ---
 Pasted image*

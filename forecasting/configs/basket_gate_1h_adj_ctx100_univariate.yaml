@@ -1,0 +1,78 @@
+# CTX100 VARIANT: identical to basket_gate_1h_adj_univariate.yaml except context_len: 100 (was 250). Middle data
+# point for a LOG-SPACED 3-point context-length sweep: 35 -> 100 -> 250 (geometric
+# midpoint of 35 and 250 is sqrt(35*250)~=93; 100 is the nearest round number, replacing
+# an earlier context_len=60 choice that was closer to 35 than to 250 on a log scale --
+# user's explicit correction 2026-09-18). Same bar count at daily and 1h (100 bars = ~20
+# trading weeks daily, ~12.5 trading days at 1h) per the same bar-count-parity convention
+# used for context_len=35/250 throughout this project. Existing (already-cached) date
+# ranges comfortably support context_len=100 (verified: both the daily 2020-2024 range
+# and the 1h 2024-05-27..2024-12-30 range support context_len up to 35 with room to
+# spare, so 100 is also fine), so no new date range needed -- every other field unchanged
+# from basket_gate_1h_adj_univariate.yaml. NOTE: per the user's explicit sequencing, this batch is meant to run AFTER
+# the main portfolio repo is pushed to GitHub, not before -- see docs/current_state.md
+# session entry / the project plan file for context.
+#
+# Phase B, close_adj follow-on — 1h, univariate arm
+# Mirrors basket_gate_1h_adj_multivariate.yaml exactly except group_mode. See that file's
+# header for the full rationale (first 1h run of the Phase B gate itself, date range
+# reused from Phase C's validated 1h confirmation window).
+stage_id: basket_gate_1h_adj_ctx100_univariate
+notes: >
+  Phase B gate, 1h + close_adj: univariate arm (cross_learning=False), paired
+  against basket_gate_1h_adj_multivariate for the McNemar gate test.
+
+data_source: algopack
+algopack_processed_path: data_pipeline/data/processed/candles_1h/shares.parquet
+price_col: close_adj
+min_ticker_coverage: 0.9
+
+group_mode: univariate
+
+interval: 60
+date_from: "2024-05-27"
+date_till: "2024-12-30"
+
+tickers:
+  - GAZP
+  - SMLT
+  - SBER
+  - ROSN
+  - MTSS
+  - LKOH
+  - T
+  - OZON
+  - PLZL
+  - VTBR
+  - YDEX
+  - VKCO
+  - GMKN
+  - MAGN
+  - AFKS
+  - MGNT
+  - PHOR
+  - AFLT
+  - IRAO
+  - FEES
+  - MDMG
+  - LENT
+  # See basket_gate_1h_adj_multivariate.yaml for the coverage-guard note -- do not assume
+  # the daily drop list applies on this shorter 217-day window.
+
+indexes:        [IMOEX, MOEXOG, MOEXMM, MOEXFN, RGBI]
+futures_proxies: [BR, Si, GD]
+
+context_len: 100
+horizon: 5
+quantiles: [0.1, 0.5, 0.9]
+
+walk_forward:
+  shift: 1
+  max_windows: 400
+
+covariates: full
+
+eval_horizons:    [1, 2, 3, 5]
+primary_horizons: [2, 3, 5]
+baselines: [zero, last, momentum5, ar1]
+
+output_dir: runs

@@ -1,0 +1,80 @@
+# CTX35 VARIANT: identical to basket_gate_daily_adj_univariate.yaml except context_len: 35 (was 250). New experiment,
+# not a fix -- tests whether a short (~7 trading week, same bar count at daily and 1h
+# per user's explicit choice 2026-09-17) locally-relevant context changes results vs
+# the full ~1-year context used everywhere else in this project. Motivated by user's
+# observation that some daily heatmap cells looked deceptively good despite a
+# seemingly-irrelevant year of lookback for a 5-day-ahead call (verified: those cells,
+# e.g. phase_c_leadlag_confirm's UNAC/IRKT, do NOT survive BH correction -- p_binom_bh
+# >=0.34 despite raw p as low as 0.005 -- confirming the concern was worth investigating,
+# not confirming those specific cells were real). Existing (already-cached) date ranges
+# give far more than max_windows=400 scorable windows even at context_len=35 (verified:
+# 1262 for the daily range, 1208 for the 1h range), so no new date range is needed --
+# every other field is unchanged from basket_gate_daily_adj_univariate.yaml.
+#
+# Phase B, close_adj follow-on — daily, univariate arm
+# Mirrors basket_gate_daily_adj_multivariate.yaml exactly except group_mode. See that file's
+# header for the full rationale (close_adj rollout, closing out daily/1h before sector
+# baskets).
+stage_id: basket_gate_daily_adj_ctx35_univariate
+notes: >
+  Phase B gate, close_adj rerun: univariate arm (cross_learning=False), paired
+  against basket_gate_daily_adj_multivariate for the McNemar gate test. Same gate
+  shape as the original (raw-close) Phase B, which FAILED 2026-09-17.
+
+data_source: algopack
+algopack_processed_path: data_pipeline/data/processed/candles_1d/shares.parquet
+price_col: close_adj
+min_ticker_coverage: 0.9
+
+group_mode: univariate
+
+interval: 24
+date_from: "2020-01-03"
+date_till: "2024-12-30"
+
+tickers:
+  - GAZP
+  - SMLT
+  - SBER
+  - ROSN
+  - MTSS
+  - LKOH
+  - T
+  - OZON
+  - PLZL
+  - VTBR
+  - YDEX
+  - VKCO
+  - GMKN
+  - MAGN
+  - AFKS
+  - MGNT
+  - PHOR
+  - AFLT
+  - IRAO
+  - FEES
+  - MDMG
+  - LENT
+  # 22 configured; min_ticker_coverage=0.9 drops LENT/MDMG/OZON/SMLT/VKCO/YDEX
+  # on the raw-close run (verified 2026-09-17) -- left in rather than pre-trimmed
+  # so a coverage-threshold change picks them back up automatically. Re-check the
+  # actual drop log on this close_adj run rather than assuming it's identical.
+
+indexes:        [IMOEX, MOEXOG, MOEXMM, MOEXFN, RGBI]
+futures_proxies: [BR, Si, GD]
+
+context_len: 35
+horizon: 5
+quantiles: [0.1, 0.5, 0.9]
+
+walk_forward:
+  shift: 1
+  max_windows: 400
+
+covariates: full
+
+eval_horizons:    [1, 2, 3, 5]
+primary_horizons: [2, 3, 5]
+baselines: [zero, last, momentum5, ar1]
+
+output_dir: runs

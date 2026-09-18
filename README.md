@@ -1,28 +1,47 @@
 # MOEX × Chronos-2
 
-Testing the predictive capability of Chronos-2 on MOEX (Moscow Exchange) financial time series,
-leveraging its ability to forecast multiple correlated series simultaneously.
+Does [Chronos-2](https://arxiv.org/abs/2510.15821) — a pretrained time-series foundation
+model, used zero-shot — show any directional edge on MOEX (Moscow Exchange) equity returns?
+
+**Result: no.** Across ~10 independent axes (resolution, grouping, price adjustment,
+context length, sector composition, lead-lag structure), every pre-registered gate failed —
+a clean, replicated null. The full methodology and results are in
+**[FINDINGS.md](FINDINGS.md)**. The point of this repo isn't the null result by itself; it's
+the process that produced it: pre-registered success criteria, Benjamini-Hochberg correction
+on every multi-cell test, discovery/confirmation splits with verified non-overlapping dates,
+and a real methodology bug (a spurious market-factor artifact) caught and fixed mid-project
+before it could contaminate a result.
 
 ## Structure
 
-- **[path_a/](path_a/)** — Path A: zero-shot Chronos-2 forecasting. The primary, actively-run
-  pipeline — stage-driven, config-based, walk-forward evaluated. Universal runner
-  (`runner.ipynb`) sources a reusable cell library (`basic_cells.ipynb`) and reads one
-  `configs/stage_X.yaml` per run.
-- **[path_b/](path_b/)** — Path B: AutoGluon fine-tuning of Chronos-2 on the same MOEX panel,
-  building on Path A's validated data pipeline and evaluation package. See
-  [path_b/README.md](path_b/README.md) for status (daily works; intraday index alignment open).
-- **[algo_data/](algo_data/)** — Data-extraction pipeline for the MOEX AlgoPack API (candles +
-  order-flow/open-interest covariates + a reproducible equity-universe selector). A
-  self-contained sibling project with its own docs/tests; feeds `path_a/` via the
-  `load_from_algopack` adapter. See [algo_data/docs/usage.md](algo_data/docs/usage.md).
-- **[docs/](docs/)** — Design decisions (`wiki.md`), master experiment plan (`exp_plan.md`),
-  session snapshot (`current_state.md`), file registry (`index.md`), project brief
-  (`project_brief.md`), and historical probe records (`probes/`).
-- **[runs/](runs/)** — Per-stage run outputs (configs, metrics, predictions, plots). Bulk
-  artifacts are gitignored; only summary-level output is committed.
+- **[forecasting/](forecasting/)** — the zero-shot Chronos-2 evaluation pipeline. Config-driven,
+  walk-forward evaluated: a universal runner (`run.ipynb`) sources a reusable cell library
+  (`lib.ipynb`) and reads one `configs/<name>.yaml` per run. 70 configs across three
+  experiment families (basket gate, lead-lag confirmation, sector baskets) — see
+  [FINDINGS.md](FINDINGS.md) for what each one tests.
+- **[data_pipeline/](data_pipeline/)** — the data-extraction pipeline for the MOEX AlgoPack
+  API (candles, order-flow/open-interest covariates, a reproducible liquidity-ranked
+  equity-universe selector, and a dividend/split price-adjustment step). A self-contained
+  sibling project with its own tests (50/50 passing offline, no network needed) and docs —
+  see [data_pipeline/docs/usage.md](data_pipeline/docs/usage.md). Feeds `forecasting/` via
+  the `load_from_algopack` adapter.
+- **[docs/transient_dependency_research.md](docs/transient_dependency_research.md)** — the
+  design document for the lead-lag/dependency-detection line of work: candidate mechanisms,
+  statistical safeguards, and what the completed experiments do and don't rule out.
+- AutoGluon fine-tuning (not published here) — an early, partially-working attempt at
+  fine-tuning Chronos-2 on the same panel. Paused deliberately rather than pushed through;
+  see FINDINGS.md's "Fine-tuning" section for why.
 
 ## Where to start
 
-Read [docs/current_state.md](docs/current_state.md) for the latest session snapshot, then
-[docs/exp_plan.md](docs/exp_plan.md) for the master plan and stage definitions.
+Read **[FINDINGS.md](FINDINGS.md)** — it has the full methodology, every experiment
+family's results table, and the limitations. `docs/transient_dependency_research.md` has the
+deeper design rationale for the lead-lag work specifically.
+
+## Reproducing a result
+
+1. Get MOEX AlgoPack API access and run `data_pipeline/` to produce the processed Parquet
+   files (see [data_pipeline/how_to_use.md](data_pipeline/how_to_use.md)).
+2. In `forecasting/`, open `run.ipynb`, point `CONFIG_PATH` at any file under `configs/`,
+   and run — each config is self-contained (tickers, dates, resolution, context length are
+   all in the YAML).

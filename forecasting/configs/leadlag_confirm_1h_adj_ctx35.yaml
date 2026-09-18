@@ -1,0 +1,80 @@
+# CTX35 VARIANT: identical to leadlag_confirm_1h_adj.yaml except context_len: 35 (was 250). New experiment,
+# not a fix -- tests whether a short (~7 trading week, same bar count at daily and 1h
+# per user's explicit choice 2026-09-17) locally-relevant context changes results vs
+# the full ~1-year context used everywhere else in this project. Motivated by user's
+# observation that some daily heatmap cells looked deceptively good despite a
+# seemingly-irrelevant year of lookback for a 5-day-ahead call (verified: those cells,
+# e.g. phase_c_leadlag_confirm's UNAC/IRKT, do NOT survive BH correction -- p_binom_bh
+# >=0.34 despite raw p as low as 0.005 -- confirming the concern was worth investigating,
+# not confirming those specific cells were real). Existing (already-cached) date ranges
+# give far more than max_windows=400 scorable windows even at context_len=35 (verified:
+# 1262 for the daily range, 1208 for the 1h range), so no new date range is needed --
+# every other field is unchanged from leadlag_confirm_1h_adj.yaml.
+#
+# Phase C (1h follow-on) — close_adj rerun, confirmation arm
+# Runs Chronos-2 (group_mode: multivariate) ONLY on the 12 tickers that appear in the
+# close_adj-rerun 1h discovery shortlist (residualized `pairwise_lagged_xcorr`, run
+# 2026-09-17 on close_adj, discovery window 2023-01-02..2024-05-24 -- 9 BH-significant
+# (pair, lag, direction) tests, q<0.05, well under the top_n=20 cap). Same discovery
+# window/split as the original raw-close 1h run (archive/concluded_stages/
+# phase_c_leadlag_1h_confirm.yaml), different shortlist (9 pairs vs 13, only partial
+# overlap -- see scratch pad for the full table). Confirmation window strictly AFTER
+# discovery (2024-05-27..2024-12-30, same 3-day gap as the original).
+stage_id: leadlag_confirm_1h_adj_ctx35
+notes: >
+  1h-resolution lead-lag confirmation, close_adj rerun. Does Chronos-2
+  (cross_learning=True) show real predictive skill, out-of-sample, on the
+  specific ticker pairs that the close_adj 1h discovery screen flagged as
+  BH-significant (q<0.05)? Per-pair success requires BH-significance WITHIN
+  this confirmation run's own test family AND beating the `last` baseline.
+  The original raw-close version of this test FAILED 2026-09-17 (0/13
+  confirmed).
+
+data_source: algopack
+algopack_processed_path: data_pipeline/data/processed/candles_1h/shares.parquet
+price_col: close_adj
+min_ticker_coverage: 0.9
+
+group_mode: multivariate
+
+interval: 60
+date_from: "2024-05-27"
+date_till: "2024-12-30"
+
+tickers:
+  # Union of ticker_i/ticker_j from the close_adj 1h discovery shortlist (2026-09-17,
+  # 9 BH-significant tests, q<0.05 -- see scratchpad for the full table).
+  - BANEP
+  - CHMF
+  - FESH
+  - HYDR
+  - MGNT
+  - MTSS
+  - NMTP
+  - SBER
+  - SBERP
+  - SNGSP
+  - UPRO
+  - VTBR
+
+indexes:        [IMOEX, MOEXOG, MOEXMM, MOEXFN, RGBI]
+futures_proxies: [BR, Si, GD]
+# NOTE: indexes/futures_proxies come from the ISS live cache (not data_pipeline) at
+# interval=60 -- already fetched for this exact date range by the original
+# phase_c_leadlag_1h_confirm.yaml run, so this should hit local cache, not the network.
+
+context_len: 35
+horizon: 5
+quantiles: [0.1, 0.5, 0.9]
+
+walk_forward:
+  shift: 1
+  max_windows: 400
+
+covariates: full
+
+eval_horizons:    [1, 2, 3, 5]
+primary_horizons: [2, 3, 5]
+baselines: [zero, last, momentum5, ar1]
+
+output_dir: runs

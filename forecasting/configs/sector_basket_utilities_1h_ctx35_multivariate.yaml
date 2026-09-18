@@ -1,0 +1,82 @@
+# CTX35 VARIANT (1h): sector basket at 1h resolution + close_adj + context_len=35.
+# Ticker list unchanged from the pre-registered daily design in
+# scratchpads/phase_sector_scratch_pad.md Section 4 (same tickers tested at a
+# different resolution -- NOT re-derived for 1h). Date range reuses Phase B/C's
+# validated, already-cached 1h window (2024-05-27..2024-12-30, 217 days) -- same
+# reasoning as configs/basket_gate_1h_adj_multivariate.yaml. context_len=35 bars = ~4
+# trading days at 1h (same BAR COUNT as the daily ctx35 variant, per user's explicit
+# choice 2026-09-17 to mirror bar count rather than calendar time across resolutions --
+# same convention as context_len=250 everywhere else in this project).
+# NOTE: some sector tickers may be missing from the 1h processed parquet (checked
+# 2026-09-17: financials' DOMRF has no 1h data) -- build_price_panel's coverage guard
+# will drop it and log why at run time; left in tickers: rather than pre-trimmed, same
+# convention as every other config in this project.
+#
+stage_id: sector_basket_utilities_1h_ctx35_multivariate
+notes: "Sector-basket experiment (utilities, 8 tickers): does Chronos-2 multivariate\n\
+  \  cross-attention show real predictive skill when the basket is economically related\n\
+  \  (same sector) rather than Phase B's deliberately cross-sector, liquidity-diverse\n\
+  \  16-ticker basket? User's hypothesis: cross-attention might benefit from real\n\
+  \  economic relatedness between series, which a diverse cross-sector basket may\
+  \ be a\n  worst-case test for. Not a retry of Phase B -- same mechanism/metrics,\
+  \ deliberately\n  different (homogeneous) basket composition. Sector classification\
+  \ verified via\n  research agent 2026-09-17 (MOEX/company sources), not guessed\
+  \ -- see\n  forecasting/scratchpads/phase_sector_scratch_pad.md for the full sector map\
+  \ and\n  verification notes (flagged uncertainties: AFKS/SFIN excluded as diversified\n\
+  \  conglomerates, WUSH/DELI both tagged transport for labeling consistency per the\n\
+  \  research agent's flag, ENPG/RUAL are financially linked -- not independent\n\
+  \  diversification within metals_mining).\n  Pair with sector_basket_utilities_1h_ctx35_univariate.yaml:\
+  \ identical except group_mode,\n  matching Phase B's paired-arm pattern for mcnemar_gate_test\
+  \ (§13)."
+data_source: algopack
+algopack_processed_path: data_pipeline/data/processed/candles_1h/shares.parquet
+min_ticker_coverage: 0.9
+price_col: close_adj
+group_mode: multivariate
+interval: 60
+date_from: "2024-05-27"
+date_till: "2024-12-30"
+tickers:
+- IRAO
+- FEES
+- UPRO
+- HYDR
+- MSNG
+- MRKC
+- MSRS
+- TORS
+indexes:
+- IMOEX
+- MOEXOG
+- MOEXMM
+- MOEXFN
+- RGBI
+futures_proxies:
+- BR
+- Si
+- GD
+context_len: 35
+horizon: 5
+quantiles:
+- 0.1
+- 0.5
+- 0.9
+walk_forward:
+  shift: 1
+  max_windows: 400
+covariates: full
+eval_horizons:
+- 1
+- 2
+- 3
+- 5
+primary_horizons:
+- 2
+- 3
+- 5
+baselines:
+- zero
+- last
+- momentum5
+- ar1
+output_dir: runs
