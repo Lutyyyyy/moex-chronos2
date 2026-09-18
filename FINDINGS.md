@@ -28,9 +28,10 @@ things earn that here:
 - **Caught methodology traps, not just a clean pipeline.** The lead-lag discovery step
   initially produced a shortlist dominated by one spurious pattern; the bug was found,
   diagnosed, and fixed before any confirmation run used the flawed shortlist. Later, the
-  context-length sweep independently produced one BH-significant ticker at exactly one of
-  three tested context lengths — checked against the other two, where it's null, rather
-  than reported as a discovery. Both are the same lesson, caught twice (details below).
+  context-length sweep independently produced one BH-significant ticker (UNAC) at exactly
+  one of three tested context lengths — rather than report it, a fresh out-of-sample
+  holdout was pulled and run specifically to test it, and it did not replicate. Both are
+  the same lesson, caught and resolved the same way (details below).
 
 ## Method
 
@@ -124,13 +125,13 @@ This pattern — real correlations at discovery, disappearing under out-of-sampl
 BH-corrected re-test — repeated across every resolution tried (daily, 1h, and the earlier
 raw-close version of this same test).
 
-**A second false positive, caught the same way, at ctx=100.** The ctx=100 basket-wide run
-was the one exception to "0/72 cells significant": UNAC came back BH-significant at all
-four evaluated horizons (DA 0.60–0.64, p_bh as low as 0.0002), and its DA at every horizon
-beats every baseline (`last`, `momentum5`, `ar1`, all ≤0.56). Taken alone, that clears every
-leg of this project's own pre-registered per-pair gate. But UNAC is on the confirmation
-shortlist precisely because it is also tested at context lengths 35 and 250 on the identical
-ticker, tickers, and confirmation window — and it is null at both:
+**A second false positive, caught and then confirmed caught, at ctx=100.** The ctx=100
+basket-wide run was the one exception to "0/72 cells significant": UNAC came back
+BH-significant at all four evaluated horizons (DA 0.60–0.64, p_bh as low as 0.0002), and its
+DA at every horizon beat every baseline (`last`, `momentum5`, `ar1`, all ≤0.56). Taken alone,
+that clears every leg of this project's own pre-registered per-pair gate. But UNAC is on the
+confirmation shortlist precisely because it is also tested at context lengths 35 and 250 on
+the identical ticker, tickers, and confirmation window — and it was null at both:
 
 | context_len | n windows | UNAC DA (h1) | p (BH-corrected) |
 |---|---:|---:|---:|
@@ -138,17 +139,22 @@ ticker, tickers, and confirmation window — and it is null at both:
 | 100 | 285 | 0.635 | 0.0002 |
 | 250 | 135 | 0.585 | 0.5210 |
 
-One significant result out of three independent context-length variants of the same test is
-exactly the base rate expected if UNAC has no real relationship and each context length is
-its own BH-controlled trial — BH controls the false-discovery *rate* within one family, not
-the chance that zero of several independently-run families produce a false positive. Treated
-as a genuine discovery, this would have been this project's one positive result. Treated
-correctly — as one hit among the three context-length variants that were, in effect, a third
-layer of unconnected testing on top of the pair-level and cell-level families already
-BH-corrected — it's a second real demonstration of the same lesson the original
-market-factor bug taught: a result that looks strong on its own numbers needs to survive
-being checked against every other angle the project already ran on the same data before it's
-trusted.
+That alone was suggestive but not decisive — a within-window stability check (splitting the
+285 ctx=100 confirmation windows into halves/quarters) showed the effect held up internally
+(DA 0.59–0.66 in every sub-period), which is not what a single lucky cluster of windows
+would look like. So rather than settle this on the same data from three different angles,
+the actual test was run: the same 18-ticker family, at ctx=100, on a completely fresh
+window — 2024-11-01 to 2026-09-17, entirely new calendar time, fetched via a dedicated
+`data_pipeline` pull specifically for this check (385 windows, more than either original
+run). **Result: null.** UNAC's DA drops to 0.545–0.569, and none of its four horizons
+survive BH correction (best p_bh=0.26, nowhere near 0.05) — nor does any other ticker in
+the family. The anomaly did not replicate.
+
+This closes the question the only way that actually could: not by arguing about the
+existing data harder, but by testing on data nobody had looked at yet. It's the same
+lesson the market-factor bug taught, demonstrated a second time end-to-end — a result that
+clears every pre-registered gate criterion on its own numbers can still be a false
+positive, and the only test that reliably tells the difference is a fresh one.
 
 **Sector baskets** (4 sectors — oil & gas, metals & mining, financials, utilities — ×
 {daily, 1h} × {context 35, 100, 250} = 24 configs, same McNemar gate as the basket-gate
@@ -171,8 +177,9 @@ the gate doesn't let it through alone.
 daily, hourly, and 10-minute resolution, and across a full log-spaced sweep of context
 length — 35 bars (≈7 trading weeks), 100 bars (≈20 weeks), and 250 bars (≈1 trading year).
 No resolution or context choice recovered a signal any other choice missed; the one
-apparent exception (UNAC at ctx=100, above) is exactly the kind of isolated hit this sweep
-was designed to be able to catch and correctly reject.
+apparent exception (UNAC at ctx=100, above) was checked against a fresh holdout window and
+did not replicate — exactly the kind of isolated hit this sweep was designed to be able to
+catch and correctly reject.
 
 ## Two additional checks, run directly against the pooled run data
 

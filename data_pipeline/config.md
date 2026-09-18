@@ -15,7 +15,12 @@ paths:
 
 period:
   start: 2020-01-01           # YYYY-MM-DD
-  end: 2024-12-31             # YYYY-MM-DD or today
+  end: today                  # YYYY-MM-DD or today -- widened 2026-09-18 from 2024-12-31 to
+                               # fetch a fresh 2025+ holdout window for the UNAC ctx=100
+                               # lead-lag anomaly (see forecasting/holdout_unac_experiment/).
+                               # Additive only -- widening period never invalidates or
+                               # truncates the already-cached/cited 2020-2024 data (only new
+                               # month chunks past 2024-12 get fetched).
 
 datasets: [candles]           # scoped to Phase B gate's needs (daily candles only); widen when a later phase needs more
 

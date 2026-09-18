@@ -1,0 +1,100 @@
+# HOLDOUT TEST (2026-09-18): a genuinely fresh out-of-sample check on the ctx=100
+# lead-lag confirmation anomaly. Identical to leadlag_confirm_adj_ctx100.yaml (same 18
+# tickers, same context_len=100, same covariates/quantiles/baselines) except the date
+# range, which is moved strictly past every window any prior test in this project has
+# touched (discovery: 2020-02-21..2023-06-30; confirmation: 2023-07-01..2024-12-30 at
+# ctx=35/100/250). This window is 2025-01-01 onward -- entirely new calendar time.
+#
+# Why this test exists: leadlag_confirm_adj_ctx100's UNAC cell came back BH-significant
+# at all 4 horizons (DA 0.60-0.64, beats every baseline), but the SAME ticker/window at
+# context_len=35 and context_len=250 is null (p_bh=0.9998 and 0.5210 respectively). A
+# within-window stability check (splitting the 285 ctx=100 confirmation windows into
+# halves/quarters) showed the effect holds up internally (DA 0.59-0.66 in every
+# sub-period), which is NOT what a single-cluster fluke would look like -- so the
+# cross-context-length check alone was not sufficient to dismiss this as noise, and this
+# holdout is the actual decisive test: does the same (ticker, context_len) combination
+# show a similar effect on data nobody has looked at yet, in either direction.
+#
+# Full 18-ticker family run (not just UNAC) so the comparison is fair -- if UNAC's ctx=100
+# result was itself one lucky draw among 18 tickers' worth of tests, running UNAC alone
+# on new data would not detect that; running the whole family lets a fresh BH correction
+# be applied exactly as it was in the original confirmation run.
+#
+# RESULT (2026-09-18, run complete): NULL -- confirms the ctx=100 anomaly was a false
+# positive. 385 windows, UNAC DA dropped from 0.60-0.64 (original ctx=100 confirmation) to
+# 0.545-0.569 here, best p_bh=0.26 (not significant), and no other ticker in the family
+# came back significant either. Required extending data_pipeline's pull (config.md's
+# period.end widened from 2024-12-31 to today) to fetch 2025-2026 data. Full writeup in
+# ../../../FINDINGS.md's lead-lag confirmation section; see README.md in this folder.
+stage_id: leadlag_confirm_adj_ctx100_holdout2025
+notes: >
+  Fresh out-of-sample holdout for the ctx=100 lead-lag confirmation anomaly (UNAC).
+  Tests the full 18-ticker confirmation family (not just UNAC) on 2024-11-01 onward,
+  a window untouched by discovery, confirmation, or any context-length variant run so
+  far. Same three-part gate as every other experiment in this project (BH-significant
+  AND beats baseline AND ΔDA>0, applied per ticker here since there's no paired
+  multivariate/univariate arm in this config). RESULT: null -- UNAC's effect did not
+  replicate (see header comment above), confirming it was a false positive.
+
+data_source: algopack
+algopack_processed_path: data_pipeline/data/processed/candles_1d/shares.parquet
+price_col: close_adj
+min_ticker_coverage: 0.9
+
+group_mode: multivariate
+
+interval: 24
+date_from: "2024-11-01"   # ~40 trading days before 2025-01-01, gives context_len=100's
+                           # warmup room so scoring starts at/near the new calendar year --
+                           # NOT itself part of the "fresh" claim, just lookback buffer.
+date_till: "2026-09-17"   # data_pipeline pull completed 2026-09-18 16:54 MSK, panel extends
+                           # through 2026-09-18, but that day's bar was captured mid-session
+                           # (real but possibly non-final volume/close) -- using the last
+                           # FULLY CLOSED session, 2026-09-17, to avoid any ambiguity from a
+                           # partial live bar. Verified: all 18 tickers have complete,
+                           # gap-free daily history 2020-01-03..2026-09-18 with real
+                           # close_adj values.
+
+tickers:
+  # Identical to leadlag_confirm_adj_ctx100.yaml's list -- same 18-ticker confirmation
+  # family, unchanged.
+  - AFLT
+  - BANEP
+  - BSPB
+  - CBOM
+  - FEES
+  - GMKN
+  - IRAO
+  - IRKT
+  - MSRS
+  - MTLRP
+  - PHOR
+  - RASP
+  - RUAL
+  - SBERP
+  - SNGSP
+  - UNAC
+  - UPRO
+  - VTBR
+
+indexes:        [IMOEX, MOEXOG, MOEXMM, MOEXFN, RGBI]
+futures_proxies: [BR, Si, GD]
+
+context_len: 100
+horizon: 5
+quantiles: [0.1, 0.5, 0.9]
+
+walk_forward:
+  shift: 1
+  max_windows: 400   # likely not reached -- ~9 months of daily bars is far fewer than
+                      # 400 scorable windows; actual count will be close to
+                      # (bars_after_warmup / shift), check run_stage's printed panel
+                      # shape when this runs.
+
+covariates: full
+
+eval_horizons:    [1, 2, 3, 5]
+primary_horizons: [2, 3, 5]
+baselines: [zero, last, momentum5, ar1]
+
+output_dir: runs
