@@ -1,6 +1,7 @@
 # --- Excluded sub-workspaces / unrelated subprojects ---
 .claude/
 !data_pipeline/.claude/
+.mcp.json
 .obsidian/
 Clippings/
 tunnels/
