@@ -14,6 +14,7 @@ Stages, run from the repo root as  .venv/bin/python forecasting/risk_experiment/
   dev_n5       N5 dev evaluation (one-factor GMV, portfolio-vol targeting) on the U2/U3 dates.
   sources_n6   N6 zero-shot source (plan G): Z3 + past covariates (IMOEX, Si, BR, GD log-RV); parity vs Z3 first.
   dev_n6       N6 dev evaluation in U1-U4 on the existing universes (new arms only in the ledger).
+  classical_parity  dev-only: recomputed classical vol forecasts must reproduce the R4 caches (holdout prep).
 Later stages (bundle_dev, dev, select, holdout_sources, bundle_holdout, holdout) are added
 in R2-R7.
 """
@@ -824,6 +825,47 @@ def stage_dev_n6() -> dict:
     return {"U1": t1, "U23": t23, "U4": t4}
 
 
+def classical_vol_panel(D) -> dict:
+    """Recompute the classical 5-day variance forecasts from a panel (no alpha-study caches), so the holdout
+    uses exactly the dev definitions: EWMA, GARCH(1,1), HAR on RV (ceiling), and log-HAR (per name, pooled,
+    pooled + market). The log-HAR training mask reproduces the alpha study's: eligible, on or after the
+    first forecast anchor, with trailing betas and the classic signals defined (the Chronos-forecast
+    condition it also had is implied, since those forecasts cover every eligible pair from that date)."""
+    import alpha_run as R
+    ret, rv, cal = D["ret"], D["rv"], D["ret"].index
+    steps = (1, 2, 3, 4, 5)
+    bc = R.BT_CFG["constructions"]["ls_rank_beta_neutral"]
+    betas = al.trailing_betas(ret, D["bench"]["imoex_ret"], window=bc["beta_window"], min_periods=bc["beta_min_periods"])
+    c1 = al.classic_signals(ret, D["value"], R.STEPS[R.LAG])
+    after = pd.DataFrame(np.repeat((cal >= pd.Timestamp(FIRST_ANCHOR))[:, None], ret.shape[1], 1), cal, ret.columns)
+    mask = (D["eligible"] & after & betas.notna() & c1["mom_12_1"].notna() & c1["lowvol_60d"].notna()
+            & c1["ar1"].notna() & c1["size"].notna())
+    return {"ewma": al.vol_ewma(ret, len(steps)), "garch": al.vol_garch(ret, steps),
+            "har_rv": al.vol_har(rv, rv, steps),
+            "loghar": al.vol_har_log(rv, steps, mask), "loghar_pooled": al.vol_har_log(rv, steps, mask, pooled=True),
+            "loghar_pooled_mkt": al.vol_har_log(rv, steps, mask, pooled=True, market=True)}
+
+
+def stage_classical_parity() -> dict:
+    """Dev-only check that classical_vol_panel reproduces the cached dev forecasts used in R4 (the holdout
+    stage will call classical_vol_panel on the full panel). No holdout data is read."""
+    D = load_panel(DEV_PANEL, ("ret", "rv", "eligible", "bench", "value"))
+    new = classical_vol_panel(D)
+    raw = pd.read_parquet(OUT / "dev" / "cache" / "vol_raw.parquet")
+    dev = span(D["ret"].index, DEV)
+    out = {}
+    for k, v in new.items():
+        ref = raw[k].reindex(index=dev, columns=v.columns)
+        x = v.reindex(index=dev)
+        both = ref.notna() & x.notna()
+        rel = ((x - ref).abs() / ref.abs()).where(both)
+        out[k] = {"cells_both": int(both.sum().sum()), "only_ref": int((ref.notna() & x.isna()).sum().sum()),
+                  "only_new": int((x.notna() & ref.isna()).sum().sum()), "max_rel_diff": float(np.nanmax(rel.to_numpy()))}
+    print(json.dumps(out, indent=1))
+    (OUT / "dev" / "classical_parity.json").write_text(json.dumps(out, indent=1))
+    return out
+
+
 def stage_dev() -> dict:
     D = load_panel(DEV_PANEL, ("ret", "rv", "eligible", "bench"))
     cal = D["ret"].index
@@ -857,4 +899,5 @@ if __name__ == "__main__" and len(sys.argv) > 1:
     {"holdout_qa": stage_holdout_qa, "regime": stage_regime, "sources_dev": stage_sources_dev,
      "dev": stage_dev, "dev_u4": stage_dev_u4, "sources_n5": stage_sources_n5,
      "n5_series": lambda: stage_sources_n5(series_only=True), "dev_n5": stage_dev_n5,
-     "sources_n6": stage_sources_n6, "dev_n6": stage_dev_n6}[sys.argv[1]]()
+     "sources_n6": stage_sources_n6, "dev_n6": stage_dev_n6,
+     "classical_parity": stage_classical_parity}[sys.argv[1]]()

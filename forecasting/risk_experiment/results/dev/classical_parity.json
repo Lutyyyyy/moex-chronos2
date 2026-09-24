@@ -1,0 +1,38 @@
+{
+ "ewma": {
+  "cells_both": 66638,
+  "only_ref": 0,
+  "only_new": 0,
+  "max_rel_diff": 0.0
+ },
+ "garch": {
+  "cells_both": 61958,
+  "only_ref": 0,
+  "only_new": 0,
+  "max_rel_diff": 0.0
+ },
+ "har_rv": {
+  "cells_both": 58627,
+  "only_ref": 0,
+  "only_new": 0,
+  "max_rel_diff": 0.0
+ },
+ "loghar": {
+  "cells_both": 58627,
+  "only_ref": 0,
+  "only_new": 0,
+  "max_rel_diff": 0.0
+ },
+ "loghar_pooled": {
+  "cells_both": 63932,
+  "only_ref": 0,
+  "only_new": 0,
+  "max_rel_diff": 0.0
+ },
+ "loghar_pooled_mkt": {
+  "cells_both": 62672,
+  "only_ref": 0,
+  "only_new": 0,
+  "max_rel_diff": 0.0
+ }
+}
