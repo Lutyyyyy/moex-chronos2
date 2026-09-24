@@ -232,7 +232,7 @@ The full table, including IC means, QLIKE and pinball loss, is in `forecasting/r
 | Best turnover-controlled variant (spanning t) | hl5: 0.42 | hl5: 0.77 | hl5: 1.46 | hl5: 0.40 |
 
 **Quantile-shape signals.** These are skew, up/down asymmetry, tail weight, downside and P(up) from the 21 quantiles.
-- On uni, every shape signal's Chronos-specific FM t is ≤ 1.09.
+- On uni, the shape signals' Chronos-specific FM t values range from −1.33 to +1.09, so none is significant.
 - On cov_fut, only P(up) is strong: IC t 7.05, and its specific part has FM t 3.65. But P(up) is another reading of the same location forecast. Controlling for MED_SIG its FM t is 1.68, and its spanning t is 0.84.
 - Robust-spread σ (IQR-based) is no better than the moment-based σ.
 
@@ -266,7 +266,7 @@ The full table, including IC means, QLIKE and pinball loss, is in `forecasting/r
   - **Pooled + market log-HAR** has QLIKE 0.455, against 0.502 for Chronos-RV xl (DM t +0.78, not significant).
   - **Per-name log-HAR** has QLIKE 0.486 (DM t +1.35).
   - **Mechanism:** Chronos's edge over EWMA and GARCH comes from working in log space and pooling across names, and classical models can do both.
-  - **By regime:** Chronos is better in calm years (2021 DM t −1.71, 2023 −1.60) and worse in the 2022 shock (+1.67).
+  - **By regime, against per-name log-HAR:** Chronos is better in calm years (2021 DM t −1.71, 2023 −1.60) and worse in the 2022 shock (+1.67). Against pooled + market log-HAR the per-year DM t values are −3.10 / +0.88 / −2.23 / +0.78 for 2021–2024. The pattern is the same: Chronos is better in calm years, but not in 2022 or 2024.
 - **Encompassing test,** pre-registered in [`prereg_vol_encompassing.md`](prereg_vol_encompassing.md) (commit `00dfa0a`); code in [`vol_encompassing.py`](vol_encompassing.py).
   - **E1 passes:** regressing log 5-day RV on log Chronos-RV and log log-HAR(pooled+mkt) with Driscoll-Kraay errors gives b_Chronos 0.56 (t 4.33) against b_logHAR 0.30 (t 1.97). By year, Chronos's t is 7.2 / 2.5 / 8.0 / 5.6.
   - **E2 fails:** the equal-weight geometric combination has QLIKE 0.467 against log-HAR's 0.455 (DM t +0.43).
