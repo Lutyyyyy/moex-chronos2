@@ -48,3 +48,5 @@ logged_at,track,tag,period,signal,book,exec_lag,cost_bps,borrow,ic_t,net_sharpe,
 2026-09-24T12:24:39,A,S3turn_uni,ext_dev,combo_plus_chronos_hl10,LS_5d,1,5,0.05,3.560368926333355,0.7052500629695695,0.04442657806500294
 2026-09-24T12:24:40,A,S3turn_uni,ext_dev,combo_classic_hl10,LS_5d,1,5,0.05,3.3849276413003335,0.7862056280438912,0.0495262993134163
 2026-09-24T12:24:42,B,S3volcal_uni,ext_dev,chronos_sig_calibrated,vol_forecast,0,,,,
+2026-09-24T12:42:53,B,S3rv,ext_dev,chronos_rv_uni,vol_forecast,0,,,,
+2026-09-24T12:42:53,B,S3rv,ext_dev,chronos_rv_xl,vol_forecast,0,,,,

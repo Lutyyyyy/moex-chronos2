@@ -572,6 +572,14 @@ KNOWN_EXTRA_DIVIDENDS = {
     "RUAL": [{"day": date(2022, 10, 20), "dividend": 1.18}],  # only RUAL dividend 2020-2024
 }
 
+# Dividends present in the poptimizer dump that were NOT paid (recommended but never approved), verified
+# 2026-09-24: MGNT 560 RUB for 9M2024, record 2025-01-09 -- EGM of 2024-12-26 failed for lack of
+# quorum (Interfax 2024-12-28, interfax.ru/business/1001158); FY2024 dividend then voted to zero.
+# No price gap exists on the record date. Keyed by (ticker, record date).
+KNOWN_UNPAID_DIVIDENDS = {
+    ("MGNT", date(2025, 1, 9)),
+}
+
 # MOEX equities settled T+2 until trades of 2023-07-28 and T+1 from trades of 2023-07-31 on.
 T1_SETTLEMENT_START = date(2023, 7, 31)
 
@@ -610,6 +618,7 @@ def fetch_dividends(cfg: Config, fetcher=None) -> pd.DataFrame:
             for rec in raw for d in rec["df"]]
     rows += [{"ticker": t, "record_date": d["day"], "dividend": float(d["dividend"])}
              for t, ds in KNOWN_EXTRA_DIVIDENDS.items() for d in ds]
+    rows = [r for r in rows if (r["ticker"], r["record_date"]) not in KNOWN_UNPAID_DIVIDENDS]
     return pd.DataFrame(rows, columns=["ticker", "record_date", "dividend"])
 
 
@@ -628,6 +637,8 @@ def compute_close_adj(close: pd.Series, timestamp: pd.Series, ticker: str, divid
 
     events = []  # (ex_date, factor)
     for _, row in dividends[dividends["ticker"] == ticker].iterrows():
+        if days and row["record_date"] > days[-1]:
+            continue  # register date after the last trading day in the data: not ex yet, no adjustment
         ex = ex_date_from_record(row["record_date"], days)
         prior = dates < ex
         if not prior.any():

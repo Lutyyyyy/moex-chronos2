@@ -117,3 +117,23 @@ def test_compute_close_adj_t2_gap_lands_on_derived_ex_date():
     adj = ap.compute_close_adj(df["close"], df["timestamp"], "SBER", dividends,
                                trading_days=_bdays("2022-07-01", "2022-07-29"))
     assert adj.tolist() == pytest.approx([95.0, 95.0, 95.0, 95.0])   # no spurious move on 07-13 or 07-14
+
+
+def test_future_record_date_is_not_applied():
+    # record date after the data end: dividend not ex yet -> no adjustment anywhere
+    df = _candles("TATN", ["2026-09-15", "2026-09-16", "2026-09-17"], [700.0, 701.0, 702.0])
+    dividends = pd.DataFrame([{"ticker": "TATN", "record_date": date(2026, 10, 13), "dividend": 37.0}])
+    adj = ap.compute_close_adj(df["close"], df["timestamp"], "TATN", dividends)
+    assert adj.tolist() == pytest.approx([700.0, 701.0, 702.0])
+
+
+def test_known_unpaid_dividend_is_dropped(tmp_path):
+    def fetcher(url):
+        return json.dumps([{"uid": "MGNT", "df": [{"day": "2025-01-09", "dividend": 560.0},
+                                                   {"day": "2024-07-15", "dividend": 412.13}]}]).encode()
+    cfg = ap.Config(path=tmp_path / "config.md", plan="paid", env_file=tmp_path / "none.env",
+                    output_root=tmp_path, start=date(2024, 1, 1), end=date(2025, 12, 31),
+                    datasets=["candles"], intervals=["1d"], tickers={"shares": ["MGNT"]}, futures=[])
+    out = ap.fetch_dividends(cfg, fetcher)
+    m = out[out.ticker == "MGNT"]
+    assert list(m.record_date) == [date(2024, 7, 15)]
