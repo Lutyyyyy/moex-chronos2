@@ -273,3 +273,9 @@ def test_hedge_and_vol_target():
     assert rl.hedge_effectiveness(s, s - h * f) > 0.9
     lev = rl.vol_target_leverage(pd.Series([0.05, 0.10, 0.20]), 0.10, cap=1.5)
     assert list(lev) == [1.5, 1.0, 0.5]
+
+
+def test_giacomini_white_identical_losses_is_nan():
+    x = pd.Series(np.random.default_rng(0).normal(size=300))
+    r = rl.giacomini_white(x, x.copy(), pd.DataFrame({"const": 1.0, "s": (np.arange(300) % 5 == 0).astype(float)}), 5)
+    assert np.isnan(r["p"]) and r["coefs"]["t"].isna().all()

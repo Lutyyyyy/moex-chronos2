@@ -172,6 +172,9 @@ def giacomini_white(loss_a: pd.Series, loss_b: pd.Series, instruments: pd.DataFr
     df = pd.concat([(loss_a - loss_b).rename("d"), instruments], axis=1).dropna()
     H = df[instruments.columns].to_numpy(float)
     d = df["d"].to_numpy(float)
+    if np.allclose(d, 0.0, atol=1e-15):                                # identical forecasts: test undefined
+        nan = pd.DataFrame({"coef": np.nan, "se": np.nan, "t": np.nan}, index=instruments.columns)
+        return dict(stat=np.nan, df=instruments.shape[1], p=np.nan, n=len(d), coefs=nan)
     Z = H * d[:, None]
     T, q = Z.shape
     zbar = Z.mean(axis=0)

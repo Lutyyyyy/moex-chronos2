@@ -382,8 +382,14 @@ def evaluate_vol(arms: dict, D, S, mask5) -> tuple:
     target5 = VT_TARGET_ANNUAL * np.sqrt(5 / 252)
     # GMV is invariant to a date-common scale, so calibrated arms share their raw arm's GMV
     raw_names = [k for k in arms if not k.endswith("_cal")]
-    paths = ra.portfolio_paths(arms, corr, R5, rf5, U, dates, target5,
-                               gmv_share={k: k[:-4] for k in arms if k.endswith("_cal")})
+    fp = OUT / "dev" / "cache" / "portfolio_paths.parquet"
+    if fp.exists():
+        P = pd.read_parquet(fp)
+        paths = {k: {m: P[(k, m)] for m in ("gmv", "vt", "vt_exposure")} for k in P.columns.levels[0]}
+    else:
+        paths = ra.portfolio_paths(arms, corr, R5, rf5, U, dates, target5,
+                                   gmv_share={k: k[:-4] for k in arms if k.endswith("_cal")})
+        pd.concat({k: pd.DataFrame(v) for k, v in paths.items()}, axis=1).to_parquet(fp)
     s = S.reindex(paths[raw_names[0]]["gmv"].index)
     classical = [k for k in arms if k.split("_cal")[0] in CLASSICAL_VOL]
     gmv_loss = {k: paths[k]["gmv"] ** 2 for k in arms}
