@@ -58,7 +58,6 @@ Full per-file descriptions and update rules are in [`index.md`](index.md). Compa
 | `index.md` | Full file map with role + update rule for each file |
 | `algopack_notes.md` | Verified ALGOPACK facts (auth, TLS, endpoints, fields, universe, sources) |
 | `certs/russian_trusted_ca.pem` | Russian Trusted Root/Sub CA for apim TLS |
-| `how_to_use.md` | Setup, config.md reference, running the pipeline, troubleshooting |
 | `config.md` | Data manifest: plan, paths, period, datasets, intervals, tickers, futures roll |
 | `src/algopack_pipeline.py` | Pipeline source, single source of truth |
 | `notebooks/algopack_pipeline.ipynb` | Generated Colab notebook — do not hand-edit |

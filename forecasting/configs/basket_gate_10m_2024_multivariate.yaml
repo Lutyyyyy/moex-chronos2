@@ -94,7 +94,7 @@ indexes:        [IMOEX, MOEXOG, MOEXMM, MOEXFN, RGBI]
 futures_proxies: [BR, Si, GD]
 # NOTE: indexes/futures_proxies come from the ISS live cache (not data_pipeline), fetched at
 # `interval` above. ISS serves 10m natively for shares/indexes/FORTS (confirmed --
-# data_pipeline/.claude/CLAUDE.md, load_config's own interval assert allows 10/60/24, no 15m
+# data_pipeline/algopack_notes.md, load_config's own interval assert allows 10/60/24, no 15m
 # anywhere). No 10m cache exists yet for these as of writing this config for this date range
 # (only interval=24/60 parquets, plus a full-2020-2024-range 10m fetch abandoned mid-run, seen
 # in moex_cache/ so far) -- this run's first §2 prefetch step will hit the network for real.

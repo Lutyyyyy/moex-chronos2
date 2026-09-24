@@ -41,7 +41,7 @@ deeper design rationale for the lead-lag work specifically.
 ## Reproducing a result
 
 1. Get MOEX AlgoPack API access and run `data_pipeline/` to produce the processed Parquet
-   files (see [data_pipeline/how_to_use.md](data_pipeline/how_to_use.md)).
+   files (see [data_pipeline/docs/usage.md](data_pipeline/docs/usage.md)).
 2. In `forecasting/`, open `run.ipynb`, point `CONFIG_PATH` at any file under `configs/`,
    and run — each config is self-contained (tickers, dates, resolution, context length are
    all in the YAML).

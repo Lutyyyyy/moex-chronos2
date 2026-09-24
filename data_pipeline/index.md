@@ -5,16 +5,15 @@ Full file map. Add an entry for every new file (role + update rule).
 | File | Role | Update rule |
 |---|---|---|
 | `CONTRIBUTING.md` | Goal, description, rules, ALGOPACK API notes, compact file index — the published reader-facing reference. | On goal/rule change or when a file is added/removed. |
-| `.claude/CLAUDE.md` | Short pointer to `CONTRIBUTING.md`/`index.md` for AI sessions working in this directory. | When the pointer's targets change. |
 | `index.md` | This file — full map of project files. | Whenever a file is created, removed or changes role. |
-| `archive/current_state.md` | Session scratchpad: what's done, open questions, next steps (kept local-only, not published). | Refresh at end of every session. |
+| `archive/current_state.md` | Build-phase status notes (2026-09-17), archived. | Frozen. |
 | `archive/algopack_clues_session_log.md` | Dated development session log (kept local-only, not published) — stable facts extracted into `CONTRIBUTING.md`. | Append as new dated decisions/facts accumulate. |
 | `.env` | `ALGOPACK_API_KEY=...`. Secret. | User-edited only. Never read aloud, log, or commit. |
 | `.gitignore` | Excludes secrets, data, caches. | When new generated/secret paths appear. |
-| `needed.md` | Open gaps: blockers, user decisions, items to verify with a working key. | Tick off / remove items as they are settled; add new gaps. |
-| `algopack_notes.md` | Verified ALGOPACK facts: auth, TLS, endpoints, fields, candles, universe, sources. | When a fact is (re)verified or an item moves over from `needed.md`. |
+| `archive/needed.md` | Build-phase open-gaps list (2026-09-15), archived. | Frozen. |
+| `algopack_notes.md` | Verified ALGOPACK facts: auth, TLS, endpoints, fields, candles, universe, sources. | When a fact is (re)verified or an item is re-checked. |
 | `certs/russian_trusted_ca.pem` | Public Russian Trusted Root + Sub CA (needed to verify `apim.moex.com` TLS). Not secret. | Refresh before Sub CA expiry 2027-03-06 (source `https://gu-st.ru/content/Other/doc/`). |
-| `how_to_use.md` | **Package instruction** for end users: quick start (Colab/local), full config.md reference, outputs/columns, futures roll, resume/runtime, troubleshooting, tests, status (verified/limits/open questions). | When config keys, outputs, behaviour, verified facts or open questions change (keep in sync with `docs/usage.md`). |
+| `archive/how_to_use.md` | Long build-phase usage guide, archived; superseded by `docs/usage.md`. | Frozen. |
 | `config.md` | Data manifest: first ```yaml block = pipeline config (plan, paths, period, datasets, intervals, tickers, futures roll, request). | When the panel/period/datasets change; keep keys in sync with `parse_config` + `docs/usage.md`. |
 | `src/algopack_pipeline.py` | **Single source of the pipeline**, split into notebook cells by `# %%` (config, client, fetch/normalize, futures roll, storage/run, universe report). | Edit here only, then run `tools/build_notebook.py` + `pytest`. |
 | `notebooks/algopack_pipeline.ipynb` | Colab notebook, generated from the module + Colab setup/run cells, CA PEM embedded. | Never edit by hand; rebuild. `tests/test_notebook.py` fails if stale. |
@@ -27,6 +26,3 @@ Full file map. Add an entry for every new file (role + update rule).
 | `data/universe/equity_universe.yaml` | Selected ~80-ticker equity universe + selection metadata (`rank_equity_universe()`), ready to paste into `config.md`. | Regenerate when the universe needs refreshing; gitignored (under `data/`). |
 | `data/universe/equity_universe_candidates.csv` | Full audit trail: every TQBR candidate + status (selected / excluded + reason). | Regenerated alongside `equity_universe.yaml`; gitignored. |
 | `tools/probe_algopack.py` | Re-runnable live access check (auth, datasets, depth, pagination, freshness, rate). Never prints the key. | When endpoints/checks change. |
-| `.claude/skills/github-code-search/` | Skill: search GitHub for existing implementations. | Copied from `moex-hack`; edit only to improve the skill. |
-| `.claude/skills/stackoverflow-search/` | Skill: search Stack Overflow for snippets. | Same as above. |
-| `.claude/commands/search-github.md` | Slash command `/search-github`. | Same as above. |

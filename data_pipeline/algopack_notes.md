@@ -1,6 +1,6 @@
 # ALGOPACK — verified notes
 
-_Pre-build check 2026-09-15. "✅ tested" = observed live from this machine; "📄 docs" = from the official OpenAPI spec / moexalgo source; unverified points → [`needed.md`](needed.md)._
+_Pre-build check 2026-09-15. "✅ tested" = observed live from this machine; "📄 docs" = from the official OpenAPI spec / moexalgo source; unverified points → [`archive/needed.md`](archive/needed.md)._
 
 ## Sources
 - OpenAPI spec (most precise): https://raw.githubusercontent.com/moexalgo/moexalgo.github.io/main/static/openapi/openapi.yaml
