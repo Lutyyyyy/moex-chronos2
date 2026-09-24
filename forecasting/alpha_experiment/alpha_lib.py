@@ -1,0 +1,828 @@
+"""alpha_lib — Chronos-2 quantile forecasts -> alpha signals -> portfolios -> backtest -> statistics.
+
+Pure pandas/numpy (+ scipy / statsmodels / arch). The Chronos pipeline is *injected* into
+`generate_forecasts`, so everything here is testable without the model (see tests/).
+
+Conventions used throughout (read these before changing anything):
+  * Every wide DataFrame is indexed by trading DATE (tz-naive, normalized) x ticker.
+  * `ret` = daily log return on the MAIN-SESSION close (last 10m bar starting <=18:50 MSK),
+    dividend/split adjusted (close_adj). The 1d candle close is the *evening-session* last print
+    and is deliberately never used (see README "Data").
+  * A signal indexed at date d uses information up to and including the main close of d.
+  * Forecast anchor d = last context day. Forecast step h refers to trading day d+h.
+  * exec_lag L: a book decided at close d is traded at the main close of d+L and earns returns
+    from d+L+1 on. The matching forecast/forward-return steps are h = L+1 .. L+5.
+"""
+from __future__ import annotations
+
+import math
+from pathlib import Path
+from typing import Callable, Iterable, Sequence
+
+import numpy as np
+import pandas as pd
+from scipy import stats as sstats
+
+NATIVE_QUANTILES: list[float] = [0.01, 0.05] + [round(0.1 + 0.05 * i, 2) for i in range(17)] + [0.95, 0.99]
+HOLDOUT_START = pd.Timestamp("2025-01-01")
+MAIN_FIRST_START = "09:50"   # opening auction bar
+MAIN_LAST_START = "18:50"    # closing auction lives in the 18:40 bar; 18:50 bar exists on a few 2025 days
+TRADING_DAYS = 252
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 1. Data: main-session daily panel, calendar, realized variance
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def load_long(path, tickers=None, columns=None, end=None) -> pd.DataFrame:
+    """Read a data_pipeline long parquet; returns tz-naive MSK `timestamp`. `end` (inclusive date)
+    is applied at read time so data after it never enters memory (holdout lock)."""
+    filters = [("ticker", "in", list(tickers))] if tickers is not None else None
+    df = pd.read_parquet(path, columns=columns, filters=filters)
+    ts = df["timestamp"]
+    if isinstance(ts.dtype, pd.DatetimeTZDtype):
+        df["timestamp"] = ts.dt.tz_convert("Europe/Moscow").dt.tz_localize(None)
+    if end is not None:
+        df = df[df["timestamp"] < pd.Timestamp(end) + pd.Timedelta(days=1)]
+    return df.reset_index(drop=True)
+
+
+def main_session_bars(bars: pd.DataFrame) -> pd.DataFrame:
+    """Keep only main-session bars (start in [09:50, 18:50]); adds `date`."""
+    hm = bars["timestamp"].dt.strftime("%H:%M")
+    out = bars[(hm >= MAIN_FIRST_START) & (hm <= MAIN_LAST_START)].copy()
+    out["date"] = out["timestamp"].dt.normalize()
+    return out
+
+
+def trading_calendar(index_bars: pd.DataFrame, min_last_start: str = "18:30") -> pd.DatetimeIndex:
+    """Trading days = weekdays on which the index (IMOEX 10m) printed a full main session
+    (a bar starting >= `min_last_start`). Excludes holidays, the Feb-Mar 2022 closure and the
+    2025+ weekend sessions."""
+    b = main_session_bars(index_bars)
+    last = b.groupby("date")["timestamp"].max().dt.strftime("%H:%M")
+    days = last.index[(last >= min_last_start).to_numpy()]
+    days = days[days.dayofweek < 5]
+    return pd.DatetimeIndex(sorted(days))
+
+
+def main_session_close(bars: pd.DataFrame, col: str = "close_adj") -> pd.DataFrame:
+    """Wide date x ticker: `col` of the last main-session bar of each day."""
+    b = main_session_bars(bars).sort_values("timestamp")
+    last = b.groupby(["date", "ticker"])[col].last()
+    return last.unstack("ticker").sort_index()
+
+
+def main_session_value(bars: pd.DataFrame) -> pd.DataFrame:
+    """Wide date x ticker: RUB traded value summed over the main session."""
+    b = main_session_bars(bars)
+    return b.groupby(["date", "ticker"])["value"].sum().unstack("ticker").sort_index()
+
+
+def build_daily_panel(share_bars: pd.DataFrame, index_bars: pd.DataFrame, ffill_limit: int = 5) -> dict:
+    """Returns dict(calendar, close, stale, ret, R, value, mkt_close, mkt_ret).
+    Prices are reindexed onto the trading calendar; a missing print is forward-filled for at most
+    `ffill_limit` days and flagged `stale` (a stale name is never eligible, but a held position
+    correctly earns 0 then the catch-up return)."""
+    cal = trading_calendar(index_bars)
+    close_raw = main_session_close(share_bars).reindex(cal)
+    # drop index-only days (e.g. 2022-01-07: IMOEX bars printed, no share traded): require at
+    # least half the usual number of share prints
+    n_print = close_raw.notna().sum(axis=1)
+    usual = n_print.rolling(21, min_periods=1, center=True).median()
+    cal = cal[(n_print >= 0.5 * usual).to_numpy()]
+    close_raw = close_raw.reindex(cal)
+    close = close_raw.ffill(limit=ffill_limit)
+    stale = close_raw.isna() & close.notna()
+    ret = np.log(close).diff()
+    value = main_session_value(share_bars).reindex(cal)
+    mkt = main_session_close(index_bars, col="close").reindex(cal).iloc[:, 0].rename("IMOEX")
+    return dict(calendar=cal, close=close, stale=stale, ret=ret, R=np.expm1(ret), value=value,
+                mkt_close=mkt, mkt_ret=np.log(mkt).diff())
+
+
+def realized_variance(share_bars: pd.DataFrame, calendar: pd.DatetimeIndex, col: str = "close_adj") -> pd.DataFrame:
+    """Daily realized variance of the main-session-close-to-main-session-close return:
+    sum of squared 10m log returns over the main session, where the first bar of day d is
+    differenced against the last main bar of the previous *calendar* trading day (so the
+    overnight gap + evening session are one squared term). Adjusted prices -> no ex-div jumps."""
+    b = main_session_bars(share_bars)
+    b = b[b["date"].isin(calendar)].sort_values(["ticker", "timestamp"])
+    r = np.log(b[col]).groupby(b["ticker"]).diff()
+    rv = (r ** 2).groupby([b["date"], b["ticker"]]).sum(min_count=1)
+    return rv.unstack("ticker").reindex(calendar)
+
+
+def fetch_key_rate(cache_path, date_from="01.01.2020", date_to=None, refresh=False) -> pd.Series:
+    """CBR key rate (percent p.a.), daily, from cbr.ru/hd_base/KeyRate (HTML table). Cached CSV."""
+    cache_path = Path(cache_path)
+    if cache_path.exists() and not refresh:
+        s = pd.read_csv(cache_path, parse_dates=["date"]).set_index("date")["key_rate"]
+        return s.sort_index()
+    import re
+    import requests
+    date_to = date_to or pd.Timestamp.today().strftime("%d.%m.%Y")
+    url = ("https://www.cbr.ru/hd_base/KeyRate/?UniDbQuery.Posted=True"
+           f"&UniDbQuery.From={date_from}&UniDbQuery.To={date_to}")
+    html = requests.get(url, timeout=30).text
+    rows = re.findall(r"<td>(\d{2}\.\d{2}\.\d{4})</td>\s*<td>([\d,]+)</td>", html)
+    if not rows:
+        raise RuntimeError("CBR key-rate table not found (page layout changed?)")
+    s = pd.Series({pd.to_datetime(d, format="%d.%m.%Y"): float(v.replace(",", ".")) for d, v in rows},
+                  name="key_rate").sort_index()
+    s.index.name = "date"
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    s.to_csv(cache_path)
+    return s
+
+
+def fetch_iss_index_daily(secid: str, date_from: str, date_till: str, cache_path, refresh=False) -> pd.Series:
+    """Daily index close from MOEX ISS candles (same endpoint as lib.ipynb `_iss_candles`), cached CSV.
+    Used for MCFTR (total-return benchmark)."""
+    cache_path = Path(cache_path)
+    if cache_path.exists() and not refresh:
+        return pd.read_csv(cache_path, parse_dates=["date"]).set_index("date")[secid]
+    import requests
+    import time
+    url = f"https://iss.moex.com/iss/engines/stock/markets/index/securities/{secid}/candles.json"
+    rows, start = [], 0
+    while True:
+        r = requests.get(url, params={"from": date_from, "till": date_till, "interval": 24, "start": start}, timeout=30)
+        r.raise_for_status()
+        data = r.json()["candles"]
+        if not data["data"]:
+            break
+        rows += data["data"]; start += len(data["data"])
+        if len(data["data"]) < 500:
+            break
+        time.sleep(0.25)
+    df = pd.DataFrame(rows, columns=data["columns"])
+    s = pd.Series(df["close"].to_numpy(), index=pd.to_datetime(df["begin"]).dt.normalize(), name=secid)
+    s.index.name = "date"
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    s.to_csv(cache_path)
+    return s
+
+
+def rf_daily(key_rate: pd.Series, calendar: pd.DatetimeIndex) -> pd.Series:
+    """Daily simple risk-free return from the key rate (as-of the previous published value)."""
+    kr = key_rate.reindex(key_rate.index.union(calendar)).ffill().reindex(calendar)
+    return ((1 + kr / 100) ** (1 / TRADING_DAYS) - 1).rename("rf")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 2. Point-in-time universe
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def pit_universe(ret: pd.DataFrame, value: pd.DataFrame, stale: pd.DataFrame, min_history: int = 250,
+                 min_median_value: float = 0.0, value_window: int = 60) -> pd.DataFrame:
+    """Boolean eligibility at date d, using data <= d only: >= min_history observed returns,
+    trailing median main-session value >= floor, and a fresh (non-stale) print on d."""
+    hist = ret.notna().cumsum()
+    liq = value.rolling(value_window, min_periods=value_window // 2).median()
+    elig = (hist >= min_history) & (liq >= min_median_value) & ~stale.reindex_like(ret).fillna(False)
+    return elig.fillna(False).astype(bool)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 3. Chronos forecast generation (pipeline injected)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def forecast_contexts(ret: pd.DataFrame, eligible: pd.DataFrame, anchor, ctx: int) -> tuple[list, list]:
+    """Contexts for one anchor: for every eligible ticker, the last `ctx` observed returns up to
+    and including the anchor date (NaN gaps dropped; positions are all the model uses)."""
+    row = eligible.loc[anchor]
+    tickers = list(row.index[row.to_numpy()])
+    hist = ret.loc[:anchor]
+    ctxs, keep = [], []
+    for t in tickers:
+        x = hist[t].dropna().to_numpy()[-ctx:]
+        if len(x) >= min(ctx, 32):
+            ctxs.append(x.astype(np.float32)); keep.append(t)
+    return keep, ctxs
+
+
+def generate_forecasts(pipeline, ret: pd.DataFrame, eligible: pd.DataFrame, anchors: Sequence,
+                       ctx: int = 250, H: int = 6, quantiles: Sequence[float] = NATIVE_QUANTILES,
+                       anchors_per_call: int = 4, out_path=None, checkpoint_every: int = 50,
+                       holdout_unlock: bool = False, progress: bool = True) -> pd.DataFrame:
+    """Long frame [anchor, ticker, h, q<level>...]. One `predict_quantiles` call covers
+    `anchors_per_call` anchors x all their eligible tickers (independent univariate series;
+    cross_learning is off by default). Resumes from `<out_path>.partial.parquet` if present."""
+    anchors = pd.DatetimeIndex(anchors)
+    if not holdout_unlock and len(anchors) and anchors.max() >= HOLDOUT_START:
+        raise AssertionError(f"holdout locked: anchor {anchors.max().date()} >= {HOLDOUT_START.date()}")
+    qcols = [f"q{q:g}" for q in quantiles]
+    partial = Path(str(out_path) + ".partial.parquet") if out_path else None
+    done_frames = []
+    if partial is not None and partial.exists():
+        prev = pd.read_parquet(partial)
+        done_frames.append(prev)
+        anchors = anchors[~anchors.isin(pd.DatetimeIndex(prev["anchor"].unique()))]
+    chunks = [anchors[i:i + anchors_per_call] for i in range(0, len(anchors), anchors_per_call)]
+    it = chunks
+    if progress:
+        try:
+            from tqdm.auto import tqdm
+            it = tqdm(chunks, desc="forecast chunks")
+        except ImportError:
+            pass
+    new_frames = []
+    for ci, chunk in enumerate(it):
+        meta, inputs = [], []
+        for a in chunk:
+            tick, ctxs = forecast_contexts(ret, eligible, a, ctx)
+            meta += [(a, t) for t in tick]; inputs += ctxs
+        if not inputs:
+            continue
+        qs, _ = pipeline.predict_quantiles(inputs, prediction_length=H, quantile_levels=list(quantiles))
+        arr = np.stack([(q.numpy() if hasattr(q, 'numpy') else np.asarray(q))[0] for q in qs])  # (n, H, n_q)
+        n = arr.shape[0]
+        frame = pd.DataFrame(arr.reshape(n * H, len(quantiles)), columns=qcols)
+        frame.insert(0, "h", np.tile(np.arange(1, H + 1), n))
+        frame.insert(0, "ticker", np.repeat([m[1] for m in meta], H))
+        frame.insert(0, "anchor", np.repeat(pd.DatetimeIndex([m[0] for m in meta]), H))
+        new_frames.append(frame)
+        if partial is not None and (ci + 1) % checkpoint_every == 0:
+            pd.concat(done_frames + new_frames, ignore_index=True).to_parquet(partial)
+    out = pd.concat(done_frames + new_frames, ignore_index=True) if (done_frames or new_frames) else pd.DataFrame()
+    if out_path is not None and not out.empty:
+        out.to_parquet(out_path)
+        if partial is not None and partial.exists():
+            partial.unlink()
+    return out
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 4. Quantile-function features
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def rearrange_quantiles(preds: pd.DataFrame, quantiles: Sequence[float] = NATIVE_QUANTILES) -> tuple[pd.DataFrame, int]:
+    """Monotone rearrangement (sort each row's quantiles; Chernozhukov et al. 2010). Chronos outputs
+    rare, tiny crossings near the median. Returns (fixed frame, number of rows that crossed)."""
+    qcols = [f"q{q:g}" for q in quantiles]
+    Q = preds[qcols].to_numpy()
+    n_bad = int((np.diff(Q, axis=1) < 0).any(axis=1).sum())
+    out = preds.copy()
+    out[qcols] = np.sort(Q, axis=1)
+    return out, n_bad
+
+
+def quantile_moments(Q: np.ndarray, u: Sequence[float], tail: str = "flat") -> tuple[np.ndarray, np.ndarray]:
+    """Mean and variance of the distribution whose quantile function is piecewise linear through
+    (u_k, Q[..., k]). Exact segment integrals: E = Σ Δu (a+b)/2, E[X²] = Σ Δu (a²+ab+b²)/3.
+    Tails outside [u_1, u_K]: 'flat' holds the end quantile; 'linear' extends the end segment
+    slope to u=0 and u=1."""
+    Q = np.asarray(Q, dtype=float)
+    u = np.asarray(u, dtype=float)
+    if tail == "linear":
+        lo = Q[..., :1] - (Q[..., 1:2] - Q[..., :1]) / (u[1] - u[0]) * u[0]
+        hi = Q[..., -1:] + (Q[..., -1:] - Q[..., -2:-1]) / (u[-1] - u[-2]) * (1 - u[-1])
+    elif tail == "flat":
+        lo, hi = Q[..., :1], Q[..., -1:]
+    else:
+        raise ValueError(tail)
+    QQ = np.concatenate([lo, Q, hi], axis=-1)
+    uu = np.concatenate([[0.0], u, [1.0]])
+    du = np.diff(uu)
+    a, b = QQ[..., :-1], QQ[..., 1:]
+    m1 = np.sum(du * (a + b) / 2, axis=-1)
+    m2 = np.sum(du * (a * a + a * b + b * b) / 3, axis=-1)
+    return m1, np.maximum(m2 - m1 ** 2, 0.0)
+
+
+def chronos_features(preds: pd.DataFrame, steps: Sequence[int], quantiles: Sequence[float] = NATIVE_QUANTILES,
+                     tail: str = "flat") -> pd.DataFrame:
+    """Per (anchor, ticker): MED (Σ q50), MU (Σ mean), SIG (√Σ var; assumes ~zero serial
+    correlation across steps), MED_SIG (MED/SIG), SKEW1 (quantile skew of the first step in
+    `steps`), SIG1 (σ of the first step). `steps` = forecast steps h the holding period covers."""
+    qcols = [f"q{q:g}" for q in quantiles]
+    p = preds[preds["h"].isin(list(steps))]
+    m, v = quantile_moments(p[qcols].to_numpy(), quantiles, tail=tail)
+    p = p[["anchor", "ticker", "h", "q0.5", "q0.1", "q0.9"]].assign(mean=m, var=v)
+    g = p.groupby(["anchor", "ticker"])
+    out = pd.DataFrame({"MED": g["q0.5"].sum(), "MU": g["mean"].sum(), "SIG": np.sqrt(g["var"].sum())})
+    first = p[p["h"] == min(steps)].set_index(["anchor", "ticker"])
+    out["SIG1"] = np.sqrt(first["var"])
+    width = (first["q0.9"] - first["q0.1"]).replace(0, np.nan)
+    out["SKEW1"] = (first["q0.9"] + first["q0.1"] - 2 * first["q0.5"]) / width
+    out["MED_SIG"] = out["MED"] / out["SIG"].replace(0, np.nan)
+    return out
+
+
+def to_wide(feat: pd.DataFrame, col: str, calendar: pd.DatetimeIndex | None = None) -> pd.DataFrame:
+    w = feat[col].unstack("ticker")
+    return w.reindex(calendar) if calendar is not None else w
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 5. Classic signals (all known at close d)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def classic_signals(ret: pd.DataFrame, value: pd.DataFrame, steps: Sequence[int] = (2, 3, 4, 5, 6),
+                    ar_window: int = 250) -> dict[str, pd.DataFrame]:
+    """mom_12_1, rev_5d, rev_1d, lowvol_60d, ar1 (rolling AR(1) forecast of Σ_h r_{d+h}), size."""
+    out = {
+        "mom_12_1": ret.rolling(231, min_periods=200).sum().shift(21),
+        "rev_5d": -ret.rolling(5, min_periods=5).sum(),
+        "rev_1d": -ret,
+        "lowvol_60d": -ret.rolling(60, min_periods=40).std(),
+        "size": np.log(value.rolling(60, min_periods=30).median()),
+    }
+    lag = ret.shift(1)
+    mu = ret.rolling(ar_window, min_periods=120).mean()
+    cov = (ret * lag).rolling(ar_window, min_periods=120).mean() - mu * lag.rolling(ar_window, min_periods=120).mean()
+    var = ret.rolling(ar_window, min_periods=120).var(ddof=0)
+    phi = (cov / var).clip(-0.99, 0.99)
+    dev = ret - mu
+    out["ar1"] = sum(mu + phi ** h * dev for h in steps)
+    return out
+
+
+def forward_returns(ret: pd.DataFrame, steps: Sequence[int]) -> pd.DataFrame:
+    """Σ_{h in steps} r_{d+h}, indexed at the signal date d (NaN if any step missing)."""
+    return sum(ret.shift(-h) for h in steps)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 6. Volatility models: forecasts of Σ_{h in steps} variance, known at close d
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def vol_trailing(ret: pd.DataFrame, n_steps: int, window: int = 20) -> pd.DataFrame:
+    return ret.rolling(window, min_periods=window).var() * n_steps
+
+
+def vol_ewma(ret: pd.DataFrame, n_steps: int, lam: float = 0.94, warmup: int = 20) -> pd.DataFrame:
+    v = (ret ** 2).ewm(alpha=1 - lam, adjust=False, ignore_na=True).mean()
+    v[ret.notna().cumsum() < warmup] = np.nan
+    return v * n_steps
+
+
+def _garch_filter(x: np.ndarray, mu, omega, alpha, beta, s2_0) -> np.ndarray:
+    """Conditional variances σ²_j of x_j given x_<j (σ²_0 = s2_0)."""
+    s2 = np.empty(len(x))
+    s2[0] = s2_0
+    for j in range(1, len(x)):
+        s2[j] = omega + alpha * (x[j - 1] - mu) ** 2 + beta * s2[j - 1]
+    return s2
+
+
+def vol_garch(ret: pd.DataFrame, steps: Sequence[int], refit_every: int = 21, min_obs: int = 250,
+              max_obs: int = 1000) -> pd.DataFrame:
+    """GARCH(1,1), normal, constant mean, fit on returns in percent. Parameters are refit every
+    `refit_every` rows on data <= d (last `max_obs` obs); between refits σ² is updated causally
+    with the latest parameters. Output: Σ_{h in steps} E[σ²_{d+h}] in log-return² units."""
+    from arch import arch_model
+    out = pd.DataFrame(np.nan, index=ret.index, columns=ret.columns)
+    for t in ret.columns:
+        x = (ret[t] * 100).to_numpy()
+        obs = np.cumsum(np.isfinite(x))
+        params, s2_next = None, None
+        for i in range(len(x)):
+            if not np.isfinite(x[i]) or obs[i] < min_obs:
+                continue
+            if params is None or i % refit_every == 0:
+                hist = x[:i + 1][np.isfinite(x[:i + 1])][-max_obs:]
+                try:
+                    res = arch_model(hist, mean="Constant", vol="GARCH", p=1, q=1, dist="normal",
+                                     rescale=False).fit(disp="off", show_warning=False)
+                    params = (res.params["mu"], res.params["omega"], res.params["alpha[1]"], res.params["beta[1]"])
+                except Exception:
+                    if params is None:
+                        continue
+                mu, om, al, be = params
+                path = _garch_filter(hist, mu, om, al, be, float(np.var(hist)))
+                s2_next = om + al * (hist[-1] - mu) ** 2 + be * path[-1]
+            else:
+                mu, om, al, be = params
+                s2_next = om + al * (x[i] - mu) ** 2 + be * s2_next
+            pers = al + be
+            unc = om / (1 - pers) if pers < 1 else s2_next
+            out.iat[i, out.columns.get_loc(t)] = sum(unc + pers ** (h - 1) * (s2_next - unc) for h in steps) / 1e4
+    return out
+
+
+def _har_features(x: pd.DataFrame) -> dict:
+    return {"d": x, "w": x.rolling(5, min_periods=5).mean(), "m": x.rolling(22, min_periods=22).mean()}
+
+
+def vol_har(daily_var: pd.DataFrame, target_daily_var: pd.DataFrame, steps: Sequence[int],
+            refit_every: int = 21, min_train: int = 250) -> pd.DataFrame:
+    """Per-ticker HAR: Σ_{h in steps} target_{d+h} ~ 1 + d + w + m, where d/w/m are daily/weekly/
+    monthly means of `daily_var` (squared daily returns for the fair rival, RV for the ceiling).
+    Refit every `refit_every` days using only rows whose forward window has fully realized
+    (row date <= d - max(steps)). Forecast floored at 10% of the monthly-mean level."""
+    f = _har_features(daily_var)
+    y = sum(target_daily_var.shift(-h) for h in steps)
+    hmax = max(steps)
+    out = pd.DataFrame(np.nan, index=daily_var.index, columns=daily_var.columns)
+    for t in daily_var.columns:
+        X = pd.concat({k: v[t] for k, v in f.items()}, axis=1)
+        yy = y[t]
+        beta = None
+        for i in range(len(X)):
+            if not X.iloc[i].notna().all():
+                continue
+            if beta is None or i % refit_every == 0:
+                tr_end = i - hmax
+                if tr_end < 0:
+                    continue
+                Xt, yt = X.iloc[:tr_end + 1], yy.iloc[:tr_end + 1]
+                ok = Xt.notna().all(axis=1) & yt.notna()
+                if ok.sum() < min_train:
+                    continue
+                A = np.column_stack([np.ones(ok.sum()), Xt[ok].to_numpy()])
+                beta = np.linalg.lstsq(A, yt[ok].to_numpy(), rcond=None)[0]
+            # linear HAR can go <= 0; floor at 10% of the model's own monthly variance level
+            floor = 0.1 * X.iloc[i]["m"] * len(steps)
+            out.iat[i, out.columns.get_loc(t)] = max(beta[0] + X.iloc[i].to_numpy() @ beta[1:], floor, 1e-12)
+    return out
+
+
+def vol_chronos(sig: pd.DataFrame) -> pd.DataFrame:
+    """Chronos σ over the holding steps -> variance forecast."""
+    return sig ** 2
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 7. Portfolio construction
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def trailing_betas(ret: pd.DataFrame, mkt_ret: pd.Series, window: int = 250, min_periods: int = 120) -> pd.DataFrame:
+    m = mkt_ret.reindex(ret.index)
+    cov = ret.apply(lambda c: c.rolling(window, min_periods=min_periods).cov(m))
+    var = m.rolling(window, min_periods=min_periods).var()
+    return cov.div(var, axis=0)
+
+
+def _xs_rank(sig: pd.DataFrame, eligible: pd.DataFrame) -> pd.DataFrame:
+    s = sig.where(eligible.reindex_like(sig).fillna(False))
+    return s.rank(axis=1, pct=True)
+
+
+def w_ls_rank(sig: pd.DataFrame, eligible: pd.DataFrame, betas: pd.DataFrame | None = None,
+              min_names: int = 10) -> pd.DataFrame:
+    """Dollar-neutral rank weights with gross exposure 1; optionally also beta-neutral (project
+    ranks off [1, β] cross-sectionally, then rescale)."""
+    r = _xs_rank(sig, eligible)
+    W = pd.DataFrame(0.0, index=r.index, columns=r.columns)
+    for d in r.index:
+        x = r.loc[d]
+        ok = x.notna()
+        if betas is not None:
+            ok &= betas.loc[d].reindex(x.index).notna() if d in betas.index else False
+        if ok.sum() < min_names:
+            continue
+        z = x[ok] - x[ok].mean()
+        if betas is not None:
+            A = np.column_stack([np.ones(ok.sum()), betas.loc[d, z.index].to_numpy()])
+            z = z - A @ np.linalg.lstsq(A, z.to_numpy(), rcond=None)[0]
+        g = np.abs(z).sum()
+        if g > 0:
+            W.loc[d, z.index] = z / g
+    return W
+
+
+def w_lo_topq(sig: pd.DataFrame, eligible: pd.DataFrame, q: float = 0.2, min_names: int = 10) -> pd.DataFrame:
+    r = _xs_rank(sig, eligible)
+    top = (r > 1 - q) & r.notna()
+    cnt = r.notna().sum(axis=1)
+    W = top.astype(float).div(top.sum(axis=1).replace(0, np.nan), axis=0).fillna(0.0)
+    W[cnt < min_names] = 0.0
+    return W
+
+
+def w_equal(eligible: pd.DataFrame) -> pd.DataFrame:
+    e = eligible.astype(float)
+    return e.div(e.sum(axis=1).replace(0, np.nan), axis=0).fillna(0.0)
+
+
+def w_inverse_vol(var_fc: pd.DataFrame, eligible: pd.DataFrame) -> pd.DataFrame:
+    iv = (1 / np.sqrt(var_fc)).where(eligible.reindex_like(var_fc).fillna(False))
+    iv = iv.replace([np.inf, -np.inf], np.nan)
+    return iv.div(iv.sum(axis=1), axis=0).fillna(0.0)
+
+
+def ewma_corr(ret: pd.DataFrame, lam: float = 0.97, min_obs: int = 60) -> dict:
+    """{date: correlation DataFrame} using returns <= date (EWMA, pairwise NaN -> 0 update)."""
+    cols = ret.columns
+    X = ret.fillna(0.0).to_numpy()
+    obs = ret.notna().cumsum().to_numpy()
+    S = np.zeros((len(cols), len(cols)))
+    out = {}
+    for i, d in enumerate(ret.index):
+        x = X[i][:, None]
+        S = lam * S + (1 - lam) * (x @ x.T)
+        if i + 1 >= min_obs:
+            sd = np.sqrt(np.clip(np.diag(S), 1e-16, None))
+            C = S / np.outer(sd, sd)
+            C[obs[i] < min_obs, :] = np.nan; C[:, obs[i] < min_obs] = np.nan
+            np.fill_diagonal(C, 1.0)
+            out[d] = C
+    return {"cols": cols, "C": out}
+
+
+def vol_target_overlay(W: pd.DataFrame, var_fc: pd.DataFrame, corr: dict, n_steps: int,
+                       target_ann: float = 0.10, lev_cap: float = 1.0) -> pd.DataFrame:
+    """Scale each date's book so its forecast annualized vol equals `target_ann`
+    (Σ = D C D with D from `var_fc` over n_steps and C from `ewma_corr`), capped at `lev_cap`."""
+    cols = list(corr["cols"])
+    out = W.copy() * 0.0
+    for d in W.index:
+        w = W.loc[d].reindex(cols).fillna(0.0).to_numpy()
+        if not np.any(w) or d not in corr["C"] or d not in var_fc.index:
+            continue
+        sd = np.sqrt(var_fc.loc[d].reindex(cols).to_numpy())
+        C = corr["C"][d]
+        m = (w != 0)
+        if not np.all(np.isfinite(sd[m])) or not np.all(np.isfinite(C[np.ix_(m, m)])):
+            continue
+        cov = np.outer(sd[m], sd[m]) * C[np.ix_(m, m)]
+        vol = math.sqrt(max(w[m] @ cov @ w[m], 1e-16) * TRADING_DAYS / n_steps)
+        out.loc[d, cols] = w * min(lev_cap, target_ann / vol)
+    return out
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 8. Backtest: staggered weekly tranches, drifting holdings, costs, borrow, exec lag
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def run_backtest(target_w: pd.DataFrame, R: pd.DataFrame, exec_lag: int = 1, n_tranches: int = 5,
+                 cost_bps: float = 0.0, borrow_annual: float = 0.0, start=None, end=None) -> pd.DataFrame:
+    """Daily P&L per unit notional of `n_tranches` staggered books.
+
+    target_w: desired weights indexed at the SIGNAL date d (row = book decided at close d).
+    Tranche k trades at close τ = d + exec_lag on calendar positions p(τ) ≡ k (mod n_tranches),
+    holds positions that drift with (1+R), earns R from τ+1. Cost = cost_bps × |Δw| at τ.
+    Borrow = borrow_annual/252 × short notional, daily. Returns are averaged over tranches.
+    `start`/`end` restrict the *reporting* window (holdings may be set before `start`)."""
+    Wt = target_w.reindex(R.index).shift(exec_lag)          # indexed at trade date τ
+    R0 = R.fillna(0.0).to_numpy()
+    Wa = Wt.to_numpy()
+    n, m = R0.shape
+    gross = np.zeros(n); cost = np.zeros(n); borrow = np.zeros(n); turn = np.zeros(n)
+    long_e = np.zeros(n); short_e = np.zeros(n)
+    has_book = np.isfinite(Wa).any(axis=1)                 # rows before the first signal are all-NaN
+    for k in range(n_tranches):
+        h = np.zeros(m)
+        for i in range(n):
+            if i > 0:
+                gross[i] += h @ R0[i] / n_tranches
+                borrow[i] += borrow_annual / TRADING_DAYS * np.clip(-h, 0, None).sum() / n_tranches
+                h = h * (1 + R0[i])
+            if i % n_tranches == k and has_book[i]:
+                w_new = np.nan_to_num(Wa[i], nan=0.0)
+                tv = np.abs(w_new - h).sum()
+                turn[i] += tv / n_tranches
+                cost[i] += cost_bps / 1e4 * tv / n_tranches
+                h = w_new
+            long_e[i] += np.clip(h, 0, None).sum() / n_tranches
+            short_e[i] += np.clip(-h, 0, None).sum() / n_tranches
+    out = pd.DataFrame({"gross": gross, "cost": cost, "borrow": borrow, "turnover": turn,
+                        "long_exp": long_e, "short_exp": short_e}, index=R.index)
+    out["net"] = out["gross"] - out["cost"] - out["borrow"]
+    if start is not None:
+        out = out[out.index >= pd.Timestamp(start)]
+    if end is not None:
+        out = out[out.index <= pd.Timestamp(end)]
+    return out
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 9. Statistics
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def ic_series(sig: pd.DataFrame, fwd: pd.DataFrame, eligible: pd.DataFrame, min_names: int = 10) -> pd.Series:
+    """Cross-sectional Spearman IC per date over eligible names with both values."""
+    s = sig.where(eligible.reindex_like(sig).fillna(False))
+    f = fwd.reindex_like(s)
+    ok = s.notna() & f.notna()
+    rs = s.where(ok).rank(axis=1); rf = f.where(ok).rank(axis=1)
+    rs = rs.sub(rs.mean(axis=1), axis=0); rf = rf.sub(rf.mean(axis=1), axis=0)
+    ic = (rs * rf).sum(axis=1) / np.sqrt((rs ** 2).sum(axis=1) * (rf ** 2).sum(axis=1))
+    return ic[ok.sum(axis=1) >= min_names].rename("ic")
+
+
+def nw_tstat(x: pd.Series | np.ndarray, lags: int) -> dict:
+    """Mean, Newey-West (Bartlett) s.e. and t-stat of a series."""
+    x = pd.Series(x).dropna().to_numpy(dtype=float)
+    n = len(x)
+    if n < 3:
+        return dict(mean=np.nan, se=np.nan, t=np.nan, n=n)
+    e = x - x.mean()
+    s = e @ e / n
+    for L in range(1, min(lags, n - 1) + 1):
+        s += 2 * (1 - L / (lags + 1)) * (e[L:] @ e[:-L]) / n
+    se = math.sqrt(max(s, 0) / n)
+    return dict(mean=float(x.mean()), se=se, t=float(x.mean() / se) if se > 0 else np.nan, n=n)
+
+
+def ols_nw(y: pd.Series, X: pd.DataFrame, lags: int) -> pd.DataFrame:
+    """OLS with constant and Newey-West covariance; returns coef, se, t per regressor."""
+    import statsmodels.api as sm
+    d = pd.concat([y.rename("y"), X], axis=1).dropna()
+    res = sm.OLS(d["y"], sm.add_constant(d.drop(columns="y"))).fit(cov_type="HAC", cov_kwds={"maxlags": lags})
+    return pd.DataFrame({"coef": res.params, "se": res.bse, "t": res.tvalues, "n": int(res.nobs)})
+
+
+def perf_stats(r: pd.Series, rf: pd.Series | None = None, periods: int = TRADING_DAYS) -> dict:
+    """Annualized stats of a daily simple-return series (excess over rf if given)."""
+    r = r.dropna()
+    x = r - rf.reindex(r.index).fillna(0.0) if rf is not None else r
+    if len(x) < 2 or x.std() == 0:
+        return dict(n=len(x))
+    eq = (1 + r).cumprod()
+    dd = eq / eq.cummax() - 1
+    downside = x[x < 0].std()
+    q = x.quantile(0.05)
+    return dict(n=len(x), ann_ret=float(x.mean() * periods), ann_vol=float(x.std() * math.sqrt(periods)),
+                sharpe=float(x.mean() / x.std() * math.sqrt(periods)),
+                sortino=float(x.mean() / downside * math.sqrt(periods)) if downside > 0 else np.nan,
+                max_dd=float(dd.min()), cvar5=float(x[x <= q].mean()),
+                skew=float(sstats.skew(x)), kurt=float(sstats.kurtosis(x, fisher=False)))
+
+
+def cost_breakeven_bps(bt: pd.DataFrame) -> float:
+    """One-way cost (bps) at which mean net return (before borrow) hits zero."""
+    tv = bt["turnover"].mean()
+    return float((bt["gross"].mean() - bt["borrow"].mean()) / tv * 1e4) if tv > 0 else np.nan
+
+
+def sharpe_diff_bootstrap(a: pd.Series, b: pd.Series, n_boot: int = 2000, block: int = 20, seed: int = 0) -> dict:
+    """Stationary block bootstrap of Sharpe(a) - Sharpe(b) on aligned daily returns.
+    p_one_sided = P*(diff <= 0) (small => a better)."""
+    from arch.bootstrap import StationaryBootstrap
+    d = pd.concat([a.rename("a"), b.rename("b")], axis=1).dropna()
+    sr = lambda x: x.mean() / x.std() * math.sqrt(TRADING_DAYS)
+    obs = sr(d["a"]) - sr(d["b"])
+    bs = StationaryBootstrap(block, d.to_numpy(), seed=seed)
+    diffs = np.array([sr(pd.Series(x[0][:, 0])) - sr(pd.Series(x[0][:, 1])) for x, _ in bs.bootstrap(n_boot)])
+    centered = diffs - diffs.mean()             # null-centered (H0: equal Sharpe)
+    return dict(diff=float(obs), ci_lo=float(np.quantile(diffs, 0.025)), ci_hi=float(np.quantile(diffs, 0.975)),
+                p_one_sided=float((centered >= obs).mean()))
+
+
+def deflated_sharpe(sr_period: float, n_obs: int, n_trials: int, sr_trials_var: float,
+                    skew: float = 0.0, kurt: float = 3.0) -> float:
+    """Bailey & López de Prado (2014) DSR. All Sharpe inputs are PER-PERIOD (not annualized).
+    Returns P(true SR > max-of-N-trials null)."""
+    if n_trials < 1 or n_obs < 3:
+        return np.nan
+    g = 0.5772156649
+    if n_trials == 1:
+        sr0 = 0.0
+    else:
+        sr0 = math.sqrt(max(sr_trials_var, 0)) * ((1 - g) * sstats.norm.ppf(1 - 1 / n_trials)
+                                                  + g * sstats.norm.ppf(1 - 1 / (n_trials * math.e)))
+    den = math.sqrt(max(1 - skew * sr_period + (kurt - 1) / 4 * sr_period ** 2, 1e-12))
+    return float(sstats.norm.cdf((sr_period - sr0) * math.sqrt(n_obs - 1) / den))
+
+
+def xs_standardize(sig: pd.DataFrame, eligible: pd.DataFrame) -> pd.DataFrame:
+    """Cross-sectional rank -> centered on 0, unit variance per date (robust to outliers)."""
+    r = _xs_rank(sig, eligible)
+    r = r.sub(r.mean(axis=1), axis=0)
+    return r.div(r.std(axis=1), axis=0)
+
+
+def fama_macbeth(fwd: pd.DataFrame, signals: dict[str, pd.DataFrame], eligible: pd.DataFrame,
+                 lags: int, dates: pd.DatetimeIndex | None = None, min_names: int = 15) -> pd.DataFrame:
+    """Per-date cross-sectional OLS of forward return on standardized signals; NW t on the
+    time series of slopes."""
+    Z = {k: xs_standardize(v, eligible) for k, v in signals.items()}
+    dates = dates if dates is not None else fwd.index
+    rows = {}
+    for d in dates:
+        if d not in fwd.index:
+            continue
+        df = pd.DataFrame({k: z.loc[d] for k, z in Z.items() if d in z.index})
+        if df.shape[1] != len(Z):
+            continue
+        df["y"] = fwd.loc[d]
+        df = df.dropna()
+        if len(df) < min_names:
+            continue
+        A = np.column_stack([np.ones(len(df)), df[list(Z)].to_numpy()])
+        rows[d] = np.linalg.lstsq(A, df["y"].to_numpy(), rcond=None)[0]
+    B = pd.DataFrame(rows, index=["const"] + list(Z)).T
+    res = {k: nw_tstat(B[k], lags) for k in B.columns}
+    return pd.DataFrame(res).T
+
+
+def qlike(rv: np.ndarray, f: np.ndarray) -> np.ndarray:
+    """QLIKE loss per observation (Patton 2011, robust to noisy RV proxies)."""
+    x = rv / f
+    return x - np.log(x) - 1
+
+
+def vol_loss_panel(rv_fwd: pd.DataFrame, fc: pd.DataFrame, mask: pd.DataFrame, scale: float = 1.0) -> pd.Series:
+    """Per-date mean QLIKE across masked names (panel -> time series for DM tests)."""
+    f = fc.reindex_like(rv_fwd) * scale
+    ok = mask.reindex_like(rv_fwd).fillna(False) & rv_fwd.gt(0) & f.gt(0)
+    L = pd.DataFrame(qlike(rv_fwd.where(ok).to_numpy(), f.where(ok).to_numpy()), index=rv_fwd.index,
+                     columns=rv_fwd.columns)
+    return L.where(ok).mean(axis=1)
+
+
+def qlike_scale(rv_fwd: pd.DataFrame, fc: pd.DataFrame, mask: pd.DataFrame) -> float:
+    """QLIKE-optimal multiplicative scale c = mean(rv/f) (fit on dev, applied on test)."""
+    f = fc.reindex_like(rv_fwd)
+    ok = mask.reindex_like(rv_fwd).fillna(False) & rv_fwd.gt(0) & f.gt(0)
+    return float((rv_fwd[ok] / f[ok]).stack().mean())
+
+
+def dm_test(loss_a: pd.Series, loss_b: pd.Series, lags: int) -> dict:
+    """Diebold-Mariano on per-date loss differential d = L_a - L_b; one-sided p for 'a better'
+    (d < 0)."""
+    d = (loss_a - loss_b).dropna()
+    r = nw_tstat(d, lags)
+    r["p_a_better"] = float(sstats.norm.cdf(r["t"])) if np.isfinite(r["t"]) else np.nan
+    return r
+
+
+def mincer_zarnowitz(rv_fwd: pd.DataFrame, fc: pd.DataFrame, mask: pd.DataFrame) -> dict:
+    f = fc.reindex_like(rv_fwd)
+    ok = mask.reindex_like(rv_fwd).fillna(False) & rv_fwd.gt(0) & f.gt(0)
+    y = np.log(rv_fwd[ok].stack()); x = np.log(f[ok].stack())
+    d = pd.concat([y, x], axis=1).dropna()
+    b, a = np.polyfit(d.iloc[:, 1], d.iloc[:, 0], 1)
+    r2 = np.corrcoef(d.iloc[:, 0], d.iloc[:, 1])[0, 1] ** 2
+    return dict(intercept=float(a), slope=float(b), r2_log=float(r2), n=len(d))
+
+
+def var_coverage(ret: pd.DataFrame, qfc: pd.DataFrame, level: float, mask: pd.DataFrame) -> dict:
+    """VaR backtest of 1-step quantile forecasts (qfc at signal date d for r_{d+1}).
+    Pooled hit rate, Kupiec LR (pooled, ignores cross-sectional dependence) and the share of
+    tickers rejecting Christoffersen independence at 5%."""
+    r1 = ret.shift(-1).reindex_like(qfc)
+    ok = mask.reindex_like(qfc).fillna(False) & r1.notna() & qfc.notna()
+    hits = (r1 < qfc).where(ok)
+    x = hits.stack().dropna().astype(float)          # pandas>=3 stack keeps NaN -> drop explicitly
+    n, k = len(x), x.sum()
+    p = k / n if n else np.nan
+    lr_uc = -2 * (k * math.log(level) + (n - k) * math.log(1 - level)
+                  - (k * math.log(max(p, 1e-12)) + (n - k) * math.log(max(1 - p, 1e-12)))) if n else np.nan
+    rej = []
+    for t in hits.columns:
+        h = hits[t].dropna().to_numpy().astype(int)
+        if len(h) < 50:
+            continue
+        a, b = h[:-1], h[1:]
+        n00 = ((a == 0) & (b == 0)).sum(); n01 = ((a == 0) & (b == 1)).sum()
+        n10 = ((a == 1) & (b == 0)).sum(); n11 = ((a == 1) & (b == 1)).sum()
+        p01 = n01 / max(n00 + n01, 1); p11 = n11 / max(n10 + n11, 1); p1 = (n01 + n11) / max(len(a), 1)
+        ll = lambda q, c1, c0: (c1 * math.log(q) if c1 else 0) + (c0 * math.log(1 - q) if c0 else 0)
+        if 0 < p1 < 1:
+            lr = -2 * (ll(p1, n01 + n11, n00 + n10) - ll(p01, n01, n00) - ll(p11, n11, n10) if 0 < p01 < 1 else 0)
+            rej.append(lr > sstats.chi2.ppf(0.95, 1))
+    return dict(level=level, n=int(n), hit_rate=float(p), kupiec_lr=float(lr_uc),
+                kupiec_p=float(1 - sstats.chi2.cdf(lr_uc, 1)) if n else np.nan,
+                christoffersen_reject_share=float(np.mean(rej)) if rej else np.nan)
+
+
+def ic_permutation_null(sig: pd.DataFrame, fwd: pd.DataFrame, eligible: pd.DataFrame, n_perm: int = 1000,
+                        seed: int = 0, min_names: int = 10) -> np.ndarray:
+    """Distribution of mean IC when signal ranks are shuffled within each date."""
+    rng = np.random.default_rng(seed)
+    s = sig.where(eligible.reindex_like(sig).fillna(False))
+    f = fwd.reindex_like(s)
+    ok = s.notna() & f.notna()
+    keep = ok.sum(axis=1) >= min_names
+    rs = s.where(ok).rank(axis=1)[keep].to_numpy(); rf = f.where(ok).rank(axis=1)[keep].to_numpy()
+    total = np.zeros(n_perm)
+    for i in range(rs.shape[0]):
+        m = ~np.isnan(rs[i])
+        a = rs[i, m] - rs[i, m].mean(); b = rf[i, m] - rf[i, m].mean()
+        b = b / np.linalg.norm(b); a = a / np.linalg.norm(a)
+        total += rng.permuted(np.tile(a, (n_perm, 1)), axis=1) @ b
+    return total / rs.shape[0]
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 10. Harness validation helpers + trial ledger
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def make_planted_panel(n_dates: int = 800, n_tickers: int = 60, ic: float = 0.05, vol: float = 0.02,
+                       horizon: int = 5, seed: int = 0) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Synthetic daily log returns + a signal known at d. r_i loads ic/√horizon on each of the
+    previous `horizon` signal values, so corr(sig_d, Σ_{h=1..horizon} r_{d+h}) ≈ ic."""
+    rng = np.random.default_rng(seed)
+    idx = pd.bdate_range("2021-01-04", periods=n_dates)
+    cols = [f"T{i:02d}" for i in range(n_tickers)]
+    sig = rng.standard_normal((n_dates, n_tickers))
+    eps = rng.standard_normal((n_dates, n_tickers))
+    r = np.zeros((n_dates, n_tickers))
+    # r_{d+h} gets ic * mean of the signal over the last `horizon` days (predictable part)
+    for i in range(n_dates):
+        lo = max(0, i - horizon)
+        pred = sig[lo:i].mean(axis=0) * math.sqrt(horizon) if i > 0 else 0.0
+        r[i] = vol * (ic * pred + math.sqrt(1 - ic ** 2) * eps[i])
+    return (pd.DataFrame(r, index=idx, columns=cols), pd.DataFrame(sig, index=idx, columns=cols))
+
+
+def append_trial(ledger_path, **row) -> None:
+    """Append one row to the trial ledger CSV (every evaluated variant, every period)."""
+    p = Path(ledger_path)
+    row = {"logged_at": pd.Timestamp.now().isoformat(timespec="seconds"), **row}
+    df = pd.DataFrame([row])
+    df.to_csv(p, mode="a", header=not p.exists(), index=False)

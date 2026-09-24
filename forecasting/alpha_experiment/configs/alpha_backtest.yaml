@@ -1,0 +1,29 @@
+# Backtest + gate settings (frozen in README pre-registration before 2024 is evaluated).
+periods:
+  dev:  ["2021-01-01", "2023-12-31"]
+  test: ["2024-01-01", "2024-12-31"]
+  holdout: ["2025-01-01", "2026-09-17"]
+  dev_ex_2022_shock: [["2022-02-01", "2022-04-30"]]   # robustness: excluded window
+rebalance:
+  n_tranches: 5                 # weekly, staggered by weekday
+  exec_lag_primary: 1           # trade at main close of d+1
+  exec_lag_optimistic: 0
+constructions:
+  ls_rank_beta_neutral: {beta_window: 250, beta_min_periods: 120}
+  lo_top_quintile: {q: 0.2}
+costs_bps_one_way: [0, 5, 10, 20]
+cost_bps_gate: 5                # = 10 bps round trip
+borrow_annual: [0.0, 0.05, 0.10]
+borrow_annual_gate: 0.05
+vol_target: {target_ann: 0.10, lev_cap_lo: 1.0, lev_cap_ls: 2.0, corr_lambda: 0.97}
+nw_lags_daily_overlapping: 8    # 2*(h-1), h=5
+track_a_candidates: [MED, MED_SIG]
+track_b_candidates: [lowvol_factor, inverse_vol_ew, voltarget_ew, voltarget_mom]
+classic: [mom_12_1, rev_5d, rev_1d, lowvol_60d, ar1]
+gate:
+  A1_ic_nw_t: 2.0
+  A2_spanning_alpha_t: 2.0
+  A3_fm_t: 2.0
+  B1_dm_p: 0.05
+  B2_boot_p: 0.05
+  dsr_dev_min: 0.95

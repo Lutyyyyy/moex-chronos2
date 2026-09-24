@@ -1,0 +1,19 @@
+# HOLDOUT forecast run — use ONCE, at the very end, for the pre-declared final candidates only.
+# Holdout (2025+) is locked: data is truncated at `date_till` at READ time and
+# alpha_lib.generate_forecasts refuses anchors >= 2025-01-01.
+stage_id: alpha_forecast_holdout
+shares_10m: data_pipeline/data/processed/candles_10m/shares.parquet
+index_10m: data_pipeline/data/processed/candles_10m/indices.parquet
+date_till: "2026-09-17"
+first_anchor: "2025-01-01"      # holdout only; UNLOCK REQUIRED
+model: amazon/chronos-2
+context_len: 250
+horizon: 6                      # steps 1..6: h=1..5 for exec_lag=0, h=2..6 for exec_lag=1 (primary)
+quantiles: native21             # [0.01, 0.05, 0.10..0.95 step 0.05, 0.99] = model's trained grid
+anchors_per_call: 4
+universe:
+  min_history: 250
+  min_median_value_rub: 5.0e+06 # trailing-60d median main-session traded value (fixed before any Chronos output was seen)
+  value_window: 60
+  ffill_limit: 5
+output_dir: forecasting/runs/alpha_forecast_holdout
