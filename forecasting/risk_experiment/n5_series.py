@@ -58,6 +58,18 @@ def residual_rv(R: pd.DataFrame, r_m: pd.Series, beta: pd.DataFrame) -> pd.DataF
     return out.where(printed & np.isfinite(beta.reindex_like(out)))
 
 
+def futures_rv(fut_bars: pd.DataFrame, calendar: pd.DatetimeIndex) -> pd.DataFrame:
+    """Daily realized variance of continuous futures (source N6 covariates): main-session 10m log returns
+    on calendar dates, overnight included, but a return between two different contracts (the roll) is
+    dropped, never counted as a price move. Wide date x ticker."""
+    b = al.main_session_bars(fut_bars)
+    b = b[b["date"].isin(calendar)].sort_values(["ticker", "timestamp"])
+    g = b.groupby("ticker")
+    r = np.log(b["close"]).groupby(b["ticker"]).diff().where(b["contract"].eq(g["contract"].shift()))
+    rv = (r ** 2).groupby([b["date"], b["ticker"]]).sum(min_count=1)
+    return rv.unstack("ticker").reindex(calendar)
+
+
 def ew_weights(eligible: pd.DataFrame) -> pd.DataFrame:
     e = eligible.astype(float)
     return e.div(e.sum(axis=1).replace(0, np.nan), axis=0)

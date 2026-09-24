@@ -43,6 +43,18 @@ def test_residual_rv_removes_the_factor():
     assert np.isnan(n5.residual_rv(R, r_m, beta).iloc[2, 0])
 
 
+def test_futures_rv_drops_the_roll_return():
+    bars, cal = _bars(n_days=3, seed=1)
+    f = bars[bars.ticker == "B"].copy().assign(ticker="F")
+    f["contract"] = np.where(f.timestamp < cal[1], "F1", "F2")
+    f.loc[f.timestamp >= cal[1], "close"] *= 1.5                    # a 50% gap at the roll, not a price move
+    rv = n5.futures_rv(f, cal)["F"]
+    ref = n5.al.realized_variance(bars[bars.ticker == "B"], cal, col="close")["B"]
+    r_over = np.log(bars[(bars.ticker == "B") & (bars.timestamp >= cal[1])].close.iloc[0] / bars[(bars.ticker == "B") & (bars.timestamp < cal[1])].close.iloc[-1])
+    assert rv.iloc[1] == pytest.approx(ref.iloc[1] - r_over ** 2)   # roll day: overnight term removed
+    assert rv.iloc[2] == pytest.approx(ref.iloc[2])                 # later days unchanged
+
+
 def test_ew_weights_sum_to_one():
     e = pd.DataFrame([[True, True, False], [False, False, False]], columns=list("abc"))
     w = n5.ew_weights(e)

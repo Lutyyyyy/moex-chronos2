@@ -12,6 +12,8 @@ Stages, run from the repo root as  .venv/bin/python forecasting/risk_experiment/
   n5_series    build and check the N5 series only (portfolio RV, IMOEX RV, residual RV).
   sources_n5   N5 zero-shot sources (plan F5): N5m [EWP, IMOEX] log-RV, N5e residual log-RV.
   dev_n5       N5 dev evaluation (one-factor GMV, portfolio-vol targeting) on the U2/U3 dates.
+  sources_n6   N6 zero-shot source (plan G): Z3 + past covariates (IMOEX, Si, BR, GD log-RV); parity vs Z3 first.
+  dev_n6       N6 dev evaluation in U1-U4 on the existing universes (new arms only in the ledger).
 Later stages (bundle_dev, dev, select, holdout_sources, bundle_holdout, holdout) are added
 in R2-R7.
 """
@@ -267,6 +269,65 @@ def stage_sources_n5(threads: int = 4, series_only: bool = False) -> dict:
     return checks
 
 
+N6_COV_FUT = ["Si", "BR", "GD"]
+N6_BATCH = 512
+
+
+def n6_covariates(D) -> tuple[dict, pd.DataFrame]:
+    """Plan G past covariates, broadcast to every stock: log RV of IMOEX and of the Si/BR/GD futures
+    (roll returns removed), forward-filled over missing days. Known at the close of each date."""
+    import n5_series as n5
+    cal, ret = D["ret"].index, D["ret"]
+    idx = al.load_long(INDEX_10M, tickers=["IMOEX"], columns=["ticker", "timestamp", "close"], end=cal.max())
+    fut = al.load_long(FUT_10M, tickers=N6_COV_FUT, end=cal.max())
+    raw = pd.concat([al.realized_variance(idx, cal, col="close")[["IMOEX"]], n5.futures_rv(fut, cal)[N6_COV_FUT]], axis=1)
+    lrv = np.log(raw.clip(lower=0) + cs.RV_EPS).where(raw.notna()).ffill()
+    cov = {f"lrv_{k}": pd.DataFrame(np.repeat(lrv[k].to_numpy()[:, None], ret.shape[1], 1), cal, ret.columns) for k in lrv}
+    return cov, raw
+
+
+def stage_sources_n6(threads: int = 4) -> dict:
+    """N6 = Z3 + past covariates (plan G). First a parity check: the same call WITHOUT covariates at
+    batch N6_BATCH must reproduce the stored Z3 forecasts on 3 anchors."""
+    import torch
+    torch.set_num_threads(threads)
+    import alpha_run as R
+    D = load_panel(DEV_PANEL, ("ret", "rv", "eligible"))
+    cal = D["ret"].index
+    anchors = cal[cal >= pd.Timestamp(FIRST_ANCHOR)]
+    target = np.log(D["rv"].clip(lower=0) + cs.RV_EPS)                 # exactly the Z3 target panel
+    cov, raw = n6_covariates(D)
+    checks = {"cov_first_valid": {k: str(raw[k].first_valid_index().date()) for k in raw},
+              "cov_missing_days_2021plus": {k: int(raw[k].loc["2021":].isna().sum()) for k in raw},
+              "cov_ann_vol": {k: round(float(np.sqrt(raw[k].loc["2021":].mean() * 252)), 3) for k in raw}}
+    pipe = R.load_pipeline()
+    par = anchors[[0, len(anchors) // 2, -1]]
+    z3 = pd.read_parquet(SRC["Z3"])
+    z3 = z3[z3["anchor"].isin(par)]
+    got = al.generate_forecasts(pipe, target, D["eligible"], par, ctx=250, H=5, anchors_per_call=1, cross_learning=True,
+                                batch_size=N6_BATCH, progress=False)
+    q = [c for c in got.columns if c.startswith("q")]
+    m = got.merge(z3, on=["anchor", "ticker", "h"], suffixes=("", "_z3"))
+    checks["parity_vs_Z3"] = {"rows": len(m), "rows_z3": len(z3),
+                              "max_abs_diff": float(np.abs(m[q].to_numpy() - m[[c + "_z3" for c in q]].to_numpy()).max())}
+    print(json.dumps(checks, indent=1), flush=True)
+    if checks["parity_vs_Z3"]["rows"] != len(z3) or checks["parity_vs_Z3"]["max_abs_diff"] > 1e-4:
+        raise SystemExit("N6 parity with Z3 failed: the call without covariates does not reproduce Z3")
+    f = source_path("N6")
+    f.parent.mkdir(parents=True, exist_ok=True)                        # generate_forecasts checkpoints mid-run
+    if not f.exists():
+        al.generate_forecasts(pipe, target, D["eligible"], anchors, ctx=250, H=5, anchors_per_call=1, cross_learning=True,
+                              covariates=cov, batch_size=N6_BATCH, out_path=f)
+    p = pd.read_parquet(f)
+    checks["N6"] = {"rows": len(p), "anchors": int(p["anchor"].nunique()), "max_anchor": str(pd.Timestamp(p["anchor"].max()).date()),
+                    "anchor_ticker_pairs": int(p[["anchor", "ticker"]].drop_duplicates().shape[0]),
+                    "eligible_pairs": int(D["eligible"].reindex(anchors).sum().sum())}
+    (OUT / "sources" / "dev" / "N6").mkdir(parents=True, exist_ok=True)
+    (OUT / "sources" / "dev" / "N6" / "checks.json").write_text(json.dumps(checks, indent=1))
+    print(json.dumps(checks, indent=1))
+    return checks
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # Stage dev (R4)
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -407,15 +468,27 @@ def _ledger(use: str, arm: str, metric: str, value: float, n: int, tag: str = "R
                     value=float(value), n=int(n))
 
 
-def evaluate_u1(arms: dict, D, S, mask1) -> pd.DataFrame:
+def _same_universe(full: pd.DataFrame, old: pd.DataFrame, what: str):
+    """New arms are evaluated on the existing universe: refuse if they would shrink it."""
+    lost = int((old & ~full).sum().sum())
+    if lost:
+        raise ValueError(f"{what}: new arms would drop {lost} (date, name) cells from the existing universe")
+
+
+def evaluate_u1(arms: dict, D, S, mask1, new: set | None = None, tag: str = "R4_dev") -> pd.DataFrame:
     y1 = D["ret"].shift(-1)
     rows = {}
     for alpha in (0.05, 0.01):
         names = [k for k, v in arms.items() if alpha in v]
         M = mask1.copy()
+        M_old = mask1.copy()
         for k in names:
             V, E = arms[k][alpha]
             M &= V.notna() & E.lt(0)
+            if not new or k not in new:
+                M_old &= V.notna() & E.lt(0)
+        if new:
+            _same_universe(M, M_old, f"U1 alpha={alpha}")
         Ls = {k: rl.fz0_panel(y1, *arms[k][alpha], M, alpha) for k in names}
         dates = Ls[names[0]].index
         s = S.reindex(dates)
@@ -443,11 +516,12 @@ def evaluate_u1(arms: dict, D, S, mask1) -> pd.DataFrame:
                 z = pd.concat(bt)
                 r.update(basel_red_share=float((z == "red").mean()), basel_yellow_share=float((z == "yellow").mean()))
             rows[(k, alpha)] = r
-            _ledger("U1", k, f"fz0_a{alpha}", r["fz0"], r["n_obs"])
+            if not new or k in new:
+                _ledger("U1", k, f"fz0_a{alpha}", r["fz0"], r["n_obs"], tag=tag)
     return pd.DataFrame(rows).T
 
 
-def evaluate_vol(arms: dict, D, S, mask5) -> tuple:
+def evaluate_vol(arms: dict, D, S, mask5, new: set | None = None, tag: str = "R4_dev") -> tuple:
     ret = D["ret"]
     steps = (1, 2, 3, 4, 5)
     rv5 = sum(D["rv"].shift(-h) for h in steps)
@@ -455,8 +529,13 @@ def evaluate_vol(arms: dict, D, S, mask5) -> tuple:
     rf = D["bench"]["rf"].reindex(ret.index)
     rf5 = np.expm1(sum(np.log1p(rf.shift(-h)) for h in steps))
     U = mask5 & R5.notna()
-    for v in arms.values():
+    U_old = U.copy()
+    for k, v in arms.items():
         U &= v.gt(0)
+        if not new or k not in new:
+            U_old &= v.gt(0)
+    if new:
+        _same_universe(U, U_old, "U2/U3")
     dates = U.index[U.sum(axis=1) >= 10]
     ec = al.ewma_corr(ret)                                              # {"cols": Index, "C": {date: ndarray}}
     corr = {d: pd.DataFrame(C, index=ec["cols"], columns=ec["cols"]) for d, C in ec["C"].items() if d in set(dates)}
@@ -467,6 +546,15 @@ def evaluate_vol(arms: dict, D, S, mask5) -> tuple:
     if fp.exists():
         P = pd.read_parquet(fp)
         paths = {k: {m: P[(k, m)] for m in ("gmv", "vt", "vt_exposure")} for k in P.columns.levels[0]}
+        missing = [k for k in arms if k not in paths]
+        if missing:                                                     # new arms: same dates, universe, correlation
+            extra = ra.portfolio_paths({k: arms[k] for k in missing}, corr, R5, rf5, U, dates, target5,
+                                       gmv_share={k: k[:-4] for k in missing if k.endswith("_cal") and k[:-4] in missing})
+            ref_idx = P.index
+            if not all(extra[k]["gmv"].index.equals(ref_idx) for k in missing):
+                raise ValueError("new-arm portfolio paths do not cover the cached dates")
+            paths.update(extra)
+            pd.concat({k: pd.DataFrame(v) for k, v in paths.items()}, axis=1).to_parquet(fp)
     else:
         paths = ra.portfolio_paths(arms, corr, R5, rf5, U, dates, target5,
                                    gmv_share={k: k[:-4] for k in arms if k.endswith("_cal")})
@@ -500,12 +588,13 @@ def evaluate_vol(arms: dict, D, S, mask5) -> tuple:
             g = rl.giacomini_white(L, gmv_loss[best_gmv], pd.DataFrame({"const": 1.0, "stress": s.fillna(0)}), NW)
             r.update(gmv_gw_p=g["p"], gmv_gw_stress_t=g["coefs"].loc["stress", "t"])
         rows[k] = r
-        _ledger("U3", k, "gmv_realized_var", L.mean(), len(L))
-        _ledger("U2", k, "vt_fee_bps_vs_ewma", fees_vs_ewma[k], len(vt))
+        if not new or k in new:
+            _ledger("U3", k, "gmv_realized_var", L.mean(), len(L), tag=tag)
+            _ledger("U2", k, "vt_fee_bps_vs_ewma", fees_vs_ewma[k], len(vt), tag=tag)
     return pd.DataFrame(rows).T, paths
 
 
-def evaluate_u4(arms: dict, D, S, mask5) -> pd.DataFrame:
+def evaluate_u4(arms: dict, D, S, mask5, new: set | None = None, tag: str = "R4_dev") -> pd.DataFrame:
     """U4 (plan F1-F4): each eligible stock hedged over d+1..d+5 with the IMOEX future (MX),
     h = ρ̂·σ̂_s/σ̂_f with a shared EWMA ρ̂ (λ=0.97) and EWMA σ̂_f (λ=0.94), plus the rolling 250-day
     OLS beta as an extra classical arm. Windows containing an MX roll are dropped (same for all arms).
@@ -521,8 +610,13 @@ def evaluate_u4(arms: dict, D, S, mask5) -> pd.DataFrame:
     Hh["ols_beta"] = al.trailing_betas(ret, r_f, 250, 120)
     U = mask5 & R5s.notna()
     U = U.mul(R5f.notna(), axis=0).astype(bool)
-    for h in Hh.values():
+    U_old = U.copy()
+    for k, h in Hh.items():
         U &= np.isfinite(h)
+        if not new or k not in new:
+            U_old &= np.isfinite(h)
+    if new:
+        _same_universe(U, U_old, "U4")
     dates = U.index[U.sum(axis=1) >= 10]
     U = U.loc[dates]
     loss = {k: (ra.hedged_returns(h, R5s, R5f).loc[dates] ** 2).where(U).mean(axis=1) for k, h in Hh.items()}
@@ -543,7 +637,8 @@ def evaluate_u4(arms: dict, D, S, mask5) -> pd.DataFrame:
             g = rl.giacomini_white(L, loss[best], pd.DataFrame({"const": 1.0, "stress": s.fillna(0)}), NW)
             r.update(gw_p=g["p"], gw_stress_t=g["coefs"].loc["stress", "t"])
         rows[k] = r
-        _ledger("U4", k, "hedged_mse", L.mean(), r["n_obs"])
+        if not new or k in new:
+            _ledger("U4", k, "hedged_mse", L.mean(), r["n_obs"], tag=tag)
     return pd.DataFrame(rows).T
 
 
@@ -682,6 +777,51 @@ def stage_dev_n5() -> pd.DataFrame:
     return t
 
 
+def stage_dev_n6() -> dict:
+    """N6 arms (plan G) on the existing U1, U2/U3 and U4 universes. Arms are built exactly like their Z3
+    twins: chrfhs_N6 like chrfhs_Z3 (U1); chr_N6 and mixeq_chr_N6 like chr_Z3 / mixeq_chr_Z3 (vol uses),
+    each with its `_cal` version."""
+    D = load_panel(DEV_PANEL, ("ret", "rv", "eligible", "bench"))
+    ret, cal, cols = D["ret"], D["ret"].index, D["ret"].columns
+    S = pd.read_csv(OUT / "stress.csv", index_col=0, parse_dates=True)["stress"].reindex(cal)
+    in_dev = pd.DataFrame(np.repeat(cal.isin(span(cal, DEV))[:, None], ret.shape[1], 1), cal, cols)
+    mask1 = D["eligible"] & in_dev & ret.shift(-1).notna()
+    mask5 = D["eligible"] & in_dev
+    P6 = pd.read_parquet(source_path("N6"))
+    y1 = ret.shift(-1)
+    # U1
+    u1 = build_u1_arms(D, S, mask1)
+    s = np.sqrt(ra.chronos_rv(P6, (1,), cal, cols))
+    u1["chrfhs_N6"] = {a: rl.fhs_var_es(y1 / s, s, mask1, a, horizon=1) for a in (0.05, 0.01)}
+    u1["chrfhs_N6_cal"] = {}
+    for a, (V, E) in u1["chrfhs_N6"].items():
+        c = rl.conformal_quantile_scale(y1, V, mask1, a, horizon=1)
+        u1["chrfhs_N6_cal"][a] = (V.mul(c, axis=0), E.mul(c, axis=0))
+    new1 = {"chrfhs_N6", "chrfhs_N6_cal"}
+    t1 = evaluate_u1(u1, D, S, mask1, new=new1, tag="R4_dev_N6")
+    # vol uses
+    steps = (1, 2, 3, 4, 5)
+    r5sq = sum(ret.shift(-h) for h in steps) ** 2
+    va = build_vol_arms(D, S, mask5)
+    nv = {"chr_N6": ra.chronos_rv(P6, steps, cal, cols)}
+    nv["mixeq_chr_N6"] = rl.geo_mix([nv["chr_N6"], va[MIX_PARTNER_VOL]], [0.5, 0.5])
+    for k in list(nv):
+        nv[k + "_cal"] = nv[k].mul(al.rolling_vol_scale(nv[k], r5sq, mask5, horizon=5), axis=0)
+    va.update(nv)
+    t23, _ = evaluate_vol(va, D, S, mask5, new=set(nv), tag="R4_dev_N6")
+    t4 = evaluate_u4(va, D, S, mask5, new=set(nv), tag="R4_dev_N6")
+    (OUT / "dev").mkdir(parents=True, exist_ok=True)
+    t1.to_csv(OUT / "dev" / "U1_n6_table.csv"); t23.to_csv(OUT / "dev" / "U23_n6_table.csv"); t4.to_csv(OUT / "dev" / "U4_n6_table.csv")
+    pd.set_option("display.width", 250); pd.set_option("display.max_columns", 40)
+    show1 = [(k, 0.05) for k in ("chrfhs_N6", "chrfhs_N6_cal", "chrfhs_Z3", "chrfhs_Z3_cal", "mixeq_chr_N1ret", "fhs_loghar_cal", "garch_t", "rm")]
+    print(t1.loc[show1, ["fz0", "fz0_calm", "fz0_stress", "dm_t_vs_rm", "dm_t_vs_garch_t", "dm_t_vs_best_classical"]].astype(float).round(4).to_string())
+    show = [k for k in list(nv) + ["chr_Z3", "chr_Z3_cal", "mixeq_chr_Z3", "mixeq_chr_Z3_cal", "loghar_pooled_mkt", "ewma", "ewma_cal"]]
+    print(t23.loc[show, ["qlike_rv5", "gmv_ann_vol", "gmv_ann_vol_calm", "gmv_ann_vol_stress", "gmv_dm_t_vs_ewma", "gmv_dm_t_vs_best_classical",
+                         "vt_ann_vol", "vt_fee_bps_vs_ewma", "vt_fee_p_vs_ewma"]].astype(float).round(4).to_string())
+    print(t4.loc[show + ["ols_beta"], ["u4_ann_vol", "u4_ann_vol_calm", "u4_ann_vol_stress", "mean_h", "dm_t_vs_ewma", "dm_t_vs_best_classical"]].astype(float).round(4).to_string())
+    return {"U1": t1, "U23": t23, "U4": t4}
+
+
 def stage_dev() -> dict:
     D = load_panel(DEV_PANEL, ("ret", "rv", "eligible", "bench"))
     cal = D["ret"].index
@@ -714,4 +854,5 @@ def stage_dev() -> dict:
 if __name__ == "__main__" and len(sys.argv) > 1:
     {"holdout_qa": stage_holdout_qa, "regime": stage_regime, "sources_dev": stage_sources_dev,
      "dev": stage_dev, "dev_u4": stage_dev_u4, "sources_n5": stage_sources_n5,
-     "n5_series": lambda: stage_sources_n5(series_only=True), "dev_n5": stage_dev_n5}[sys.argv[1]]()
+     "n5_series": lambda: stage_sources_n5(series_only=True), "dev_n5": stage_dev_n5,
+     "sources_n6": stage_sources_n6, "dev_n6": stage_dev_n6}[sys.argv[1]]()
