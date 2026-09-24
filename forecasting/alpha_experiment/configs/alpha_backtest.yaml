@@ -3,6 +3,7 @@ periods:
   dev:  ["2021-01-01", "2023-12-31"]
   test: ["2024-01-01", "2024-12-31"]
   holdout: ["2025-01-01", "2026-09-17"]
+  ext_dev: ["2021-01-01", "2024-12-31"]   # improvement experiments (after the one-shot 2024 gate)
   dev_ex_2022_shock: [["2022-02-01", "2022-04-30"]]   # robustness: excluded window
 rebalance:
   n_tranches: 5                 # weekly, staggered by weekday

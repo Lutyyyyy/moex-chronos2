@@ -187,28 +187,56 @@ def pit_universe(ret: pd.DataFrame, value: pd.DataFrame, stale: pd.DataFrame, mi
 # 3. Chronos forecast generation (pipeline injected)
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def forecast_contexts(ret: pd.DataFrame, eligible: pd.DataFrame, anchor, ctx: int) -> tuple[list, list]:
+def forecast_contexts(ret: pd.DataFrame, eligible: pd.DataFrame, anchor, ctx: int,
+                      covariates: dict[str, pd.DataFrame] | None = None, stride: int = 1,
+                      tickers: list | None = None) -> tuple[list, list]:
     """Contexts for one anchor: for every eligible ticker, the last `ctx` observed returns up to
-    and including the anchor date (NaN gaps dropped; positions are all the model uses)."""
-    row = eligible.loc[anchor]
-    tickers = list(row.index[row.to_numpy()])
+    and including the anchor date (NaN gaps dropped; positions are all the model uses).
+    With `covariates` ({name: wide date x ticker frame}), each input is a Chronos-2 dict
+    {"target", "past_covariates"} whose covariate values sit on exactly the same dates as the
+    target context (missing covariate values -> 0). Past-only: nothing after the anchor is used."""
+    if tickers is None:
+        row = eligible.loc[anchor]
+        tickers = list(row.index[row.to_numpy()])
     hist = ret.loc[:anchor]
-    ctxs, keep = [], []
+    inputs, keep = [], []
     for t in tickers:
-        x = hist[t].dropna().to_numpy()[-ctx:]
-        if len(x) >= min(ctx, 32):
-            ctxs.append(x.astype(np.float32)); keep.append(t)
-    return keep, ctxs
+        s = hist[t].dropna()
+        if stride > 1:                      # e.g. non-overlapping 5-day blocks ending at the anchor
+            s = s.iloc[::-1].iloc[::stride].iloc[::-1]
+        s = s.iloc[-ctx:]
+        if len(s) < min(ctx, 32):
+            continue
+        x = s.to_numpy().astype(np.float32)
+        if covariates:
+            pc = {k: v[t].reindex(s.index).fillna(0.0).to_numpy().astype(np.float32) for k, v in covariates.items()}
+            inputs.append({"target": x, "past_covariates": pc})
+        else:
+            inputs.append(x)
+        keep.append(t)
+    return keep, inputs
 
 
 def generate_forecasts(pipeline, ret: pd.DataFrame, eligible: pd.DataFrame, anchors: Sequence,
                        ctx: int = 250, H: int = 6, quantiles: Sequence[float] = NATIVE_QUANTILES,
                        anchors_per_call: int = 4, out_path=None, checkpoint_every: int = 50,
-                       holdout_unlock: bool = False, progress: bool = True) -> pd.DataFrame:
+                       holdout_unlock: bool = False, progress: bool = True,
+                       covariates: dict[str, pd.DataFrame] | None = None, cross_learning: bool = False,
+                       batch_size: int = 256, group_fn: Callable | None = None,
+                       extra_series: pd.DataFrame | None = None, stride: int = 1) -> pd.DataFrame:
     """Long frame [anchor, ticker, h, q<level>...]. One `predict_quantiles` call covers
-    `anchors_per_call` anchors x all their eligible tickers (independent univariate series;
-    cross_learning is off by default). Resumes from `<out_path>.partial.parquet` if present."""
+    `anchors_per_call` anchors x all their eligible tickers. Resumes from
+    `<out_path>.partial.parquet` if present.
+    cross_learning=True: every series in a call attends to every other (group attention), so a
+    call must hold exactly ONE anchor (else earlier anchors would see later data) and the whole
+    cross-section must fit one model batch (`batch_size` counts target + covariate series).
+    group_fn(anchor, tickers) -> list of ticker lists: separate attention groups (one call each).
+    extra_series: wide frame of non-traded series (indexes, futures) co-forecast inside every
+    group for their information only; their forecasts are discarded.
+    stride: context subsampling (with a pre-summed panel, stride=5 gives weekly blocks)."""
     anchors = pd.DatetimeIndex(anchors)
+    if cross_learning and anchors_per_call != 1:
+        raise ValueError("cross_learning requires anchors_per_call=1 (no cross-anchor attention / look-ahead)")
     if not holdout_unlock and len(anchors) and anchors.max() >= HOLDOUT_START:
         raise AssertionError(f"holdout locked: anchor {anchors.max().date()} >= {HOLDOUT_START.date()}")
     qcols = [f"q{q:g}" for q in quantiles]
@@ -229,13 +257,42 @@ def generate_forecasts(pipeline, ret: pd.DataFrame, eligible: pd.DataFrame, anch
     new_frames = []
     for ci, chunk in enumerate(it):
         meta, inputs = [], []
+        calls = []                                        # (meta, inputs, n_extra) per model call
         for a in chunk:
-            tick, ctxs = forecast_contexts(ret, eligible, a, ctx)
-            meta += [(a, t) for t in tick]; inputs += ctxs
-        if not inputs:
+            tick, ctxs = forecast_contexts(ret, eligible, a, ctx, covariates, stride)
+            if not tick:
+                continue
+            groups = group_fn(a, tick) if (group_fn is not None and cross_learning) else [tick]
+            pos = {t: i for i, t in enumerate(tick)}
+            for g in groups:
+                g = [t for t in g if t in pos]
+                if not g:
+                    continue
+                inp = [ctxs[pos[t]] for t in g]
+                n_extra = 0
+                if extra_series is not None:
+                    if covariates:
+                        raise ValueError("extra_series with covariates is not supported")
+                    _, ex = forecast_contexts(extra_series, pd.DataFrame(True, index=[a], columns=extra_series.columns),
+                                              a, ctx, None, stride)
+                    inp += ex; n_extra = len(ex)
+                calls.append(([(a, t) for t in g], inp, n_extra))
+        if not calls:
             continue
-        qs, _ = pipeline.predict_quantiles(inputs, prediction_length=H, quantile_levels=list(quantiles))
-        arr = np.stack([(q.numpy() if hasattr(q, 'numpy') else np.asarray(q))[0] for q in qs])  # (n, H, n_q)
+        if not cross_learning:                            # independent series: merge into one call
+            calls = [([m for c in calls for m in c[0]], [x for c in calls for x in c[1]], 0)]
+        arrs = []
+        for cm, inp, n_extra in calls:
+            n_series = len(inp) * (1 + (len(covariates) if covariates else 0))
+            if cross_learning and n_series > batch_size:
+                raise ValueError(f"cross-section of {n_series} series exceeds batch_size={batch_size}: "
+                                 "it would be split into separate attention groups")
+            kw = dict(cross_learning=True, batch_size=batch_size) if cross_learning else {}
+            qs, _ = pipeline.predict_quantiles(inp, prediction_length=H, quantile_levels=list(quantiles), **kw)
+            qs = qs[:len(inp) - n_extra]                   # drop co-forecast extra series
+            arrs.append(np.stack([(q.numpy() if hasattr(q, 'numpy') else np.asarray(q))[0] for q in qs]))
+            meta += cm
+        arr = np.concatenate(arrs)                         # (n, H, n_q)
         n = arr.shape[0]
         frame = pd.DataFrame(arr.reshape(n * H, len(quantiles)), columns=qcols)
         frame.insert(0, "h", np.tile(np.arange(1, H + 1), n))
@@ -307,6 +364,67 @@ def chronos_features(preds: pd.DataFrame, steps: Sequence[int], quantiles: Seque
     out["SKEW1"] = (first["q0.9"] + first["q0.1"] - 2 * first["q0.5"]) / width
     out["MED_SIG"] = out["MED"] / out["SIG"].replace(0, np.nan)
     return out
+
+
+def chronos_features_block(preds: pd.DataFrame, steps: Sequence[int] = (), quantiles: Sequence[float] = NATIVE_QUANTILES,
+                           tail: str = "flat") -> pd.DataFrame:
+    """Features when h=1 IS the whole holding-period block (5-day-sum target): MED = q50,
+    SIG = σ of that block directly (no Σvar assumption). `steps` is ignored (same block for both lags)."""
+    qcols = [f"q{q:g}" for q in quantiles]
+    p = preds[preds["h"] == 1].set_index(["anchor", "ticker"])
+    m, v = quantile_moments(p[qcols].to_numpy(), quantiles, tail=tail)
+    out = pd.DataFrame({"MED": p["q0.5"], "MU": m, "SIG": np.sqrt(v)}, index=p.index)
+    out["SIG1"] = out["SIG"] / np.sqrt(5)
+    width = (p["q0.9"] - p["q0.1"]).replace(0, np.nan)
+    out["SKEW1"] = (p["q0.9"] + p["q0.1"] - 2 * p["q0.5"]) / width
+    out["MED_SIG"] = out["MED"] / out["SIG"].replace(0, np.nan)
+    return out
+
+
+def chronos_features_cumulative(preds: pd.DataFrame, steps: Sequence[int], quantiles: Sequence[float] = NATIVE_QUANTILES,
+                                tail: str = "flat") -> pd.DataFrame:
+    """Features from CUMULATIVE-return quantiles C_h = log P_{d+h} - log P_d (log-price target).
+    Over steps a..b: MED = q50(C_b) - q50(C_{a-1}); var = var(C_b) - var(C_{a-1}) (independent-
+    increment approximation, floored); SIG1/SKEW1 from the first step's increment when a == 1."""
+    qcols = [f"q{q:g}" for q in quantiles]
+    a, b = min(steps), max(steps)
+    P = preds.set_index(["anchor", "ticker", "h"])
+    def at(h):
+        x = P.xs(h, level="h")
+        m, v = quantile_moments(x[qcols].to_numpy(), quantiles, tail=tail)
+        return x["q0.5"], pd.Series(v, index=x.index), x
+    med_b, var_b, xb = at(b)
+    if a > 1:
+        med_a, var_a, _ = at(a - 1)
+    else:
+        med_a, var_a = 0.0 * med_b, 0.0 * var_b
+    out = pd.DataFrame({"MED": med_b - med_a, "SIG": np.sqrt(np.maximum(var_b - var_a, 1e-10))})
+    m1, v1, x1 = at(1)
+    out["MU"] = out["MED"]
+    out["SIG1"] = np.sqrt(v1)
+    width = (x1["q0.9"] - x1["q0.1"]).replace(0, np.nan)
+    out["SKEW1"] = (x1["q0.9"] + x1["q0.1"] - 2 * x1["q0.5"]) / width
+    out["MED_SIG"] = out["MED"] / out["SIG"].replace(0, np.nan)
+    return out
+
+
+def loo_residual(ret: pd.DataFrame) -> pd.DataFrame:
+    """NaN-aware leave-one-out market residual: r_i - mean of the OTHER names with data that day."""
+    n = ret.notna().sum(axis=1)
+    tot = ret.sum(axis=1, min_count=1)
+    others = (tot.to_numpy()[:, None] - ret) / (n.to_numpy()[:, None] - 1).clip(min=1)
+    return (ret - others).where(ret.notna() & (n.to_numpy()[:, None] > 2))
+
+
+def futures_main_returns(fut_bars: pd.DataFrame, calendar: pd.DatetimeIndex) -> pd.DataFrame:
+    """Daily log returns of continuous futures on the main-session close, NaN when the contract
+    changed between the two closes (roll) — never a cross-contract return."""
+    b = main_session_bars(fut_bars).sort_values("timestamp")
+    last = b.groupby(["date", "ticker"])[["close", "contract"]].last()
+    close = last["close"].unstack("ticker").reindex(calendar)
+    con = last["contract"].unstack("ticker").reindex(calendar)
+    r = np.log(close).diff()
+    return r.where(con.eq(con.shift(1)))
 
 
 def to_wide(feat: pd.DataFrame, col: str, calendar: pd.DatetimeIndex | None = None) -> pd.DataFrame:
@@ -825,3 +943,114 @@ def append_trial(ledger_path, **row) -> None:
     row = {"logged_at": pd.Timestamp.now().isoformat(timespec="seconds"), **row}
     df = pd.DataFrame([row])
     df.to_csv(p, mode="a", header=not p.exists(), index=False)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 11. Step-3 improvements: mimic, combination, turnover control, vol calibration
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def context_features(ret: pd.DataFrame) -> dict[str, pd.DataFrame]:
+    """Cheap statistics of each name's own return history, all known at close d (the inputs a
+    'Chronos-mimic' may use): trailing means, trailing vols, last return, EWMA vol."""
+    f = {f"m{w}": ret.rolling(w, min_periods=max(3, w // 2)).mean() for w in (5, 20, 60, 120, 250)}
+    f.update({f"s{w}": ret.rolling(w, min_periods=max(3, w // 2)).std() for w in (20, 60, 250)})
+    f["r1"] = ret
+    f["ewvol"] = np.sqrt((ret ** 2).ewm(alpha=0.06, adjust=False, ignore_na=True).mean())
+    return f
+
+
+def _stack_z(frames: dict[str, pd.DataFrame], mask: pd.DataFrame) -> dict[str, pd.DataFrame]:
+    return {k: xs_standardize(v, mask) for k, v in frames.items()}
+
+
+def rolling_xs_fit(target: pd.DataFrame, features: dict[str, pd.DataFrame], mask: pd.DataFrame,
+                   window: int = 250, refit_every: int = 21, min_rows: int = 2000) -> tuple[pd.DataFrame, pd.Series]:
+    """Causal pooled regression of the cross-sectionally standardized `target` on standardized
+    `features` (plus their squares). Coefficients used at date d are fit on dates (d-window, d-1]
+    only, refit every `refit_every` dates. Returns (fitted values, per-date out-of-sample corr
+    between fitted and actual target)."""
+    Zt = xs_standardize(target, mask)
+    Zf = _stack_z(features, mask)
+    names = list(Zf) + [f"{k}^2" for k in Zf]
+    Zf.update({f"{k}^2": v ** 2 for k, v in list(Zf.items())})
+    dates = target.index
+    fitted = pd.DataFrame(np.nan, index=dates, columns=target.columns)
+    beta = None
+    Y = Zt.to_numpy(); Xs = np.stack([Zf[k].to_numpy() for k in names], axis=-1)   # (T, N, K)
+    for i, d in enumerate(dates):
+        if beta is None or i % refit_every == 0:
+            lo = max(0, i - window)
+            y = Y[lo:i].reshape(-1); x = Xs[lo:i].reshape(-1, len(names))
+            ok = np.isfinite(y) & np.isfinite(x).all(axis=1)
+            if ok.sum() >= min_rows:
+                A = np.column_stack([np.ones(ok.sum()), x[ok]])
+                beta = np.linalg.lstsq(A, y[ok], rcond=None)[0]
+        if beta is None:
+            continue
+        x = Xs[i]
+        ok = np.isfinite(x).all(axis=1)
+        v = np.full(x.shape[0], np.nan)
+        v[ok] = beta[0] + x[ok] @ beta[1:]
+        fitted.iloc[i] = v
+    fitted = fitted.where(mask.reindex_like(fitted).fillna(False))
+    oos = pd.Series({d: pd.concat([fitted.loc[d], Zt.loc[d]], axis=1).dropna().corr().iloc[0, 1]
+                     for d in dates if fitted.loc[d].notna().sum() >= 10})
+    return fitted, oos
+
+
+def xs_slopes(fwd: pd.DataFrame, signals: dict[str, pd.DataFrame], mask: pd.DataFrame, min_names: int = 15) -> pd.DataFrame:
+    """Per-date Fama-MacBeth slopes of forward return on standardized signals (row = signal date)."""
+    Z = _stack_z(signals, mask)
+    rows = {}
+    for d in fwd.index:
+        df = pd.DataFrame({k: z.loc[d] for k, z in Z.items()})
+        df["y"] = fwd.loc[d]
+        df = df.dropna()
+        if len(df) < min_names:
+            continue
+        A = np.column_stack([np.ones(len(df)), df[list(Z)].to_numpy()])
+        rows[d] = np.linalg.lstsq(A, df["y"].to_numpy(), rcond=None)[0][1:]
+    return pd.DataFrame(rows, index=list(Z)).T.reindex(fwd.index)
+
+
+def rolling_composite(fwd: pd.DataFrame, signals: dict[str, pd.DataFrame], mask: pd.DataFrame, horizon: int,
+                      window: int = 250, min_obs: int = 120, slopes: pd.DataFrame | None = None) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Composite = Σ_k w_k(d) z_k(d), with w(d) = mean Fama-MacBeth slope over signal dates in
+    (d-horizon-window, d-horizon] — only slopes whose forward return has fully realized by d.
+    Returns (composite signal, weights)."""
+    S = slopes if slopes is not None else xs_slopes(fwd, signals, mask)
+    W = S.shift(horizon).rolling(window, min_periods=min_obs).mean()
+    Z = _stack_z(signals, mask)
+    comp = sum(Z[k].mul(W[k], axis=0) for k in signals)
+    return comp.where(mask.reindex_like(comp).fillna(False)), W
+
+
+def smooth_signal(sig: pd.DataFrame, mask: pd.DataFrame, halflife: float) -> pd.DataFrame:
+    """Causal EMA (per name) of the cross-sectionally standardized signal; halflife in trading days."""
+    z = xs_standardize(sig, mask)
+    if not halflife:
+        return z
+    sm = z.ewm(halflife=halflife, adjust=False, ignore_na=True).mean()
+    return sm.where(mask.reindex_like(sm).fillna(False))
+
+
+def rolling_vol_scale(var_fc: pd.DataFrame, rv_fwd: pd.DataFrame, mask: pd.DataFrame, horizon: int,
+                      window: int = 250, min_obs: int = 60) -> pd.Series:
+    """Causal level recalibration: scale(d) = median over signal dates (d-horizon-window, d-horizon]
+    of the cross-sectional mean of rv_fwd / var_fc (only fully realized windows)."""
+    ok = mask.reindex_like(var_fc).fillna(False) & var_fc.gt(0) & rv_fwd.reindex_like(var_fc).gt(0)
+    ratio = (rv_fwd.reindex_like(var_fc) / var_fc).where(ok).mean(axis=1)
+    return ratio.shift(horizon).rolling(window, min_periods=min_obs).median()
+
+
+def mean_exp_quantiles(Q: np.ndarray, u: Sequence[float] = NATIVE_QUANTILES, n_grid: int = 199) -> np.ndarray:
+    """E[exp(X)] for X with piecewise-linear quantile function through (u_k, Q[..., k]) and flat
+    tails: numerical ∫ exp(Q(u)) du on a fine u-grid. Used to turn log-RV quantiles into E[RV]."""
+    Q = np.asarray(Q, dtype=float)
+    u = np.asarray(u, dtype=float)
+    g = (np.arange(n_grid) + 0.5) / n_grid
+    idx = np.clip(np.searchsorted(u, g) - 1, 0, len(u) - 2)
+    w = np.clip((g - u[idx]) / (u[idx + 1] - u[idx]), 0, 1)
+    Qg = Q[..., idx] * (1 - w) + Q[..., idx + 1] * w
+    Qg = np.where(g < u[0], Q[..., :1], np.where(g > u[-1], Q[..., -1:], Qg))
+    return np.exp(Qg).mean(axis=-1)

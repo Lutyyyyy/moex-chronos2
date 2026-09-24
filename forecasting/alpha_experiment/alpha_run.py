@@ -33,7 +33,7 @@ LEDGER = HERE / "trial_ledger.csv"
 # ## Stage `data`: main-session panel, universe, realized variance, benchmarks
 
 # %%
-def stage_data(cfg=FC_CFG, out_dir=DATA_DIR):
+def stage_data(cfg=FC_CFG, out_dir=DATA_DIR, allow_download=True):
     out_dir.mkdir(parents=True, exist_ok=True)
     end = cfg["date_till"]
     shares = al.load_long(ROOT / cfg["shares_10m"], columns=["ticker", "timestamp", "close", "close_adj", "value"], end=end)
@@ -44,7 +44,11 @@ def stage_data(cfg=FC_CFG, out_dir=DATA_DIR):
     u = cfg["universe"]
     elig = al.pit_universe(P["ret"], P["value"], P["stale"], min_history=u["min_history"],
                            min_median_value=u["min_median_value_rub"], value_window=u["value_window"])
-    mcftr = al.fetch_iss_index_daily("MCFTR", "2020-01-01", end, CACHE / f"alpha_MCFTR_1d_2020-01-01_{end}.csv")
+    mcftr_cache = CACHE / f"alpha_MCFTR_1d_2020-01-01_{end}.csv"
+    if mcftr_cache.exists() or allow_download:
+        mcftr = al.fetch_iss_index_daily("MCFTR", "2020-01-01", end, mcftr_cache)
+    else:   # no network pull requested: MCFTR left missing (reported in data_checks)
+        mcftr = pd.Series(np.nan, index=P["calendar"], name="MCFTR")
     kr = al.fetch_key_rate(CACHE / "key_rate.csv")
     for name, df in dict(close=P["close"], ret=P["ret"], stale=P["stale"], value=P["value"], rv=rv, eligible=elig).items():
         df.to_parquet(out_dir / f"{name}.parquet")
@@ -53,15 +57,15 @@ def stage_data(cfg=FC_CFG, out_dir=DATA_DIR):
                           "rf": al.rf_daily(kr[kr.index <= pd.Timestamp(end)], P["calendar"])})
     bench["mcftr_ret"] = np.log(bench["mcftr_close"]).diff()
     bench.to_parquet(out_dir / "bench.parquet")
-    return data_checks(shares, P, rv, elig, bench)
+    return data_checks(shares, P, rv, elig, bench, cfg, out_dir)
 
 
-def data_checks(shares, P, rv, elig, bench) -> dict:
+def data_checks(shares, P, rv, elig, bench, cfg=FC_CFG, out_dir=DATA_DIR) -> dict:
     """Sanity checks listed in the plan's Verification section."""
     cal = P["calendar"]
     # (1) main close differs from the evening 1d close on most post-2021 days
     d1 = al.load_long(ROOT / "data_pipeline/data/processed/candles_1d/shares.parquet",
-                      tickers=["SBER", "GAZP", "LKOH"], columns=["ticker", "timestamp", "close"], end=FC_CFG["date_till"])
+                      tickers=["SBER", "GAZP", "LKOH"], columns=["ticker", "timestamp", "close"], end=cfg["date_till"])
     d1["date"] = d1["timestamp"].dt.normalize()
     raw_main = al.main_session_close(shares[shares.ticker.isin(["SBER", "GAZP", "LKOH"])], col="close")
     j = d1.set_index(["date", "ticker"])["close"].rename("c1d").to_frame().join(raw_main.stack().rename("cmain"))
@@ -84,12 +88,13 @@ def data_checks(shares, P, rv, elig, bench) -> dict:
         eligible_names=dict(first_date=str(n_elig[n_elig > 0].index[0].date()),
                             min_after_2021=int(n_elig["2021":].min()), median_2021=int(n_elig["2021"].median()),
                             median_2023=int(n_elig["2023"].median()), median_2024=int(n_elig["2024"].median()),
+                            median_last_year=int(n_elig.iloc[-250:].median()),
                             ever=int(elig.any().sum())),
         mcftr_missing_on_calendar=int(bench["mcftr_close"]["2021":].isna().sum()),
         rf_last=float(bench["rf"].iloc[-1]),
     )
     print(json.dumps(checks, indent=2, default=str))
-    (DATA_DIR / "data_checks.json").write_text(json.dumps(checks, indent=2, default=str))
+    (out_dir / "data_checks.json").write_text(json.dumps(checks, indent=2, default=str))
     return checks
 
 
@@ -160,13 +165,14 @@ def period_bounds(name):
     return pd.Timestamp(lo), pd.Timestamp(hi)
 
 
-def build_inputs(preds: pd.DataFrame, D: dict) -> dict:
+def build_inputs(preds: pd.DataFrame, D: dict, feat_fn=None) -> dict:
     """Everything derived from data + forecasts (signals, vol forecasts, masks). Causal by construction."""
     cal = D["ret"].index
     ret, value = D["ret"], D["value"]
     X = {"D": D, "cal": cal}
+    feat_fn = feat_fn or al.chronos_features
     for lag, steps in STEPS.items():
-        F = al.chronos_features(preds, steps)
+        F = feat_fn(preds, steps)
         X[f"F{lag}"] = {c: al.to_wide(F, c, cal).reindex(columns=ret.columns) for c in F.columns}
         X[f"classic{lag}"] = al.classic_signals(ret, value, steps)
         X[f"fwd{lag}"] = al.forward_returns(ret, steps)
@@ -206,9 +212,9 @@ def ic_stats(sig, X, period, lag=LAG, mask=None):
                 ic_t_ex2022shock=ex["t"]), ic
 
 
-def bt_stats(W, X, period, lag=LAG, cost=COST, borrow=BORROW, excess=False):
+def bt_stats(W, X, period, lag=LAG, cost=COST, borrow=BORROW, excess=False, n_tranches=None):
     lo, hi = period_bounds(period)
-    bt = al.run_backtest(W, X["D"]["R"], exec_lag=lag, n_tranches=BT_CFG["rebalance"]["n_tranches"],
+    bt = al.run_backtest(W, X["D"]["R"], exec_lag=lag, n_tranches=n_tranches or BT_CFG["rebalance"]["n_tranches"],
                          cost_bps=cost, borrow_annual=borrow, start=lo, end=hi)
     rf = X["D"]["bench"]["rf"] if excess else None
     s = al.perf_stats(bt["net"], rf)
@@ -521,11 +527,580 @@ def stage_test(out_dir=TEST_DIR, tag="v1_test"):
     return gate
 
 
+# %% [markdown]
+# ## Stage `variants` (improvement I0): 2x2 of cross_learning x covariates, on extended dev 2021-2024
+# Baseline = the corrected v1 forecasts (univariate, no covariates). Every variant, the baseline
+# included, is evaluated by the same function. Holdout stays sealed.
+
+# %%
+VAR_DIR = ROOT / "forecasting/runs/alpha_variants"
+VARIANTS = {
+    "uni": dict(),                                                       # baseline (re-uses v1c preds)
+    "xl": dict(cross_learning=True, anchors_per_call=1),
+    "cov": dict(covariates=True),
+    "xl_cov": dict(covariates=True, cross_learning=True, anchors_per_call=1),
+}
+
+
+def covariate_panels(D) -> dict:
+    """Past covariates: IMOEX daily log return (same for all names) and the name's own
+    log change in main-session traded value. Both known at the close of each context day."""
+    ret = D["ret"]
+    mkt = pd.DataFrame(np.repeat(D["bench"]["imoex_ret"].reindex(ret.index).to_numpy()[:, None], ret.shape[1], 1),
+                       ret.index, ret.columns)
+    dlogval = np.log(D["value"].replace(0, np.nan)).diff().reindex_like(ret)
+    return {"mkt": mkt, "dlogval": dlogval}
+
+
+def pinball_1step(preds, ret, mask, dates):
+    """Mean pinball loss of the h=1 21-quantile forecast vs realized r_{d+1} (proper score, whole distribution)."""
+    p = preds[(preds["h"] == 1) & preds["anchor"].isin(dates)]
+    y = ret.shift(-1).stack().rename("y"); y.index.names = ["anchor", "ticker"]
+    p = p.join(y, on=["anchor", "ticker"])
+    ok = mask.stack().rename("m"); ok.index.names = ["anchor", "ticker"]
+    p = p.join(ok, on=["anchor", "ticker"])
+    p = p[p["m"].fillna(False).astype(bool) & p["y"].notna()]
+    losses = []
+    for q in al.NATIVE_QUANTILES:
+        e = p["y"] - p[f"q{q:g}"]
+        losses.append(np.maximum(q * e, (q - 1) * e))
+    p = p.assign(loss=np.mean(np.stack(losses), axis=0))
+    return p.groupby("anchor")["loss"].mean()                            # per-date series (for paired tests)
+
+
+def evaluate_variant(name, preds, D, classic_pnl, V_base, period="ext_dev", tag="I0_2x2",
+                     feat_fn=None, base_mask=None, base_sig=None):
+    X = build_inputs(preds, D, feat_fn); X["preds"] = preds
+    F = X[f"F{LAG}"]
+    out = dict(variant=name)
+    if base_mask is not None:            # same evaluation universe for every config (paired comparisons)
+        own = X["mask"]
+        X["mask"] = base_mask & F["MED"].notna()
+        d0 = ic_dates(X, period, STEPS[LAG])
+        out["coverage_vs_base"] = float(X["mask"].loc[d0].sum().sum() / max(base_mask.loc[d0].sum().sum(), 1))
+    ics = {}
+    for sig in ["MED_SIG", "MED"]:
+        st, ic = ic_stats(F[sig], X, period); ics[sig] = ic
+        out[f"{sig}_ic"] = st["ic_mean"]; out[f"{sig}_ic_t"] = st["ic_t"]
+    W = books(F["MED_SIG"], X, "LS")
+    s, bt = bt_stats(W, X, period)
+    out.update(ls_net_sharpe=s.get("sharpe"), ls_gross_sharpe=s.get("gross_sharpe"), ls_turnover=s.get("turnover_ann"))
+    Xs = pd.DataFrame({k: classic_pnl[k] for k in BT_CFG["classic"]})
+    Xs["IMOEX"] = np.expm1(D["bench"]["imoex_ret"]).reindex(bt.index)
+    span = al.ols_nw(bt["net"], Xs.reindex(bt.index), lags=10)
+    out.update(span_alpha_ann=float(span.loc["const", "coef"] * 252), span_alpha_t=float(span.loc["const", "t"]))
+    C = X[f"classic{LAG}"]
+    fm = al.fama_macbeth(X[f"fwd{LAG}"], {"chronos": F["MED_SIG"], "mom_12_1": C["mom_12_1"], "rev_5d": C["rev_5d"],
+                                          "rev_1d": C["rev_1d"], "lowvol_60d": C["lowvol_60d"], "size": C["size"]},
+                         X["mask"], lags=NW, dates=ic_dates(X, period, STEPS[LAG]))
+    out["fm_t"] = float(fm.loc["chronos", "t"])
+    if base_sig is not None and name != "uni":   # incremental over the baseline Chronos signal + classic factors
+        fm2 = al.fama_macbeth(X[f"fwd{LAG}"], {"chronos": F["MED_SIG"], "chronos_uni": base_sig, "mom_12_1": C["mom_12_1"],
+                                               "rev_5d": C["rev_5d"], "rev_1d": C["rev_1d"], "lowvol_60d": C["lowvol_60d"],
+                                               "size": C["size"]}, X["mask"], lags=NW, dates=ic_dates(X, period, STEPS[LAG]))
+        out["fm_t_over_uni"] = float(fm2.loc["chronos", "t"])
+    # Track B: variance over steps 1..5 vs realized variance
+    steps = STEPS[0]
+    rv_fwd = sum(D["rv"].shift(-h) for h in steps)
+    d = ic_dates(X, period, steps)
+    vc = al.vol_chronos(X["F0"]["SIG"])
+    m = X["mask"].loc[d] & vc.loc[d].notna() & V_base["ewma"].loc[d].notna() & V_base["garch"].loc[d].notna()
+    loss = al.vol_loss_panel(rv_fwd.loc[d], vc.loc[d], m)
+    sc = al.qlike_scale(rv_fwd.loc[d], vc.loc[d], m)
+    loss_sc = al.vol_loss_panel(rv_fwd.loc[d], vc.loc[d], m, scale=sc)
+    out.update(qlike=float(loss.mean()), qlike_scaled=float(loss_sc.mean()))
+    for k in ["ewma", "garch"]:
+        lb = al.vol_loss_panel(rv_fwd.loc[d], V_base[k].loc[d], m)
+        out[f"dm_t_vs_{k}"] = al.dm_test(loss, lb, NW)["t"]          # negative = Chronos variant better
+    pb = pinball_1step(preds, D["ret"], X["mask"], d)
+    out["pinball_h1"] = float(pb.mean())
+    cov = al.var_coverage(D["ret"], preds[preds.h == 1].pivot(index="anchor", columns="ticker", values="q0.05")
+                          .reindex(index=X["cal"], columns=D["ret"].columns).loc[d], 0.05, X["mask"].loc[d])
+    out["q05_hit"] = cov["hit_rate"]
+    al.append_trial(LEDGER, track="A", tag=tag, period=period, signal=f"{name}|MED_SIG", book="LS", exec_lag=LAG,
+                    cost_bps=COST, borrow=BORROW, ic_t=out["MED_SIG_ic_t"], net_sharpe=out["ls_net_sharpe"],
+                    daily_sr=(out["ls_net_sharpe"] or np.nan) / np.sqrt(252))
+    al.append_trial(LEDGER, track="B", tag=tag, period=period, signal=f"{name}|SIG", book="vol_forecast",
+                    exec_lag=0, cost_bps=np.nan, borrow=np.nan, net_sharpe=np.nan, daily_sr=np.nan)
+    series = dict(ic=ics["MED_SIG"], qlike=loss, qlike_sc=loss_sc, pinball=pb, pnl=bt["net"])
+    return out, series
+
+
+def stage_variants(names=None):
+    VAR_DIR.mkdir(parents=True, exist_ok=True)
+    D = load_data()
+    cov = covariate_panels(D)
+    names = names or list(VARIANTS)
+    base_preds = load_preds()
+    preds = {"uni": base_preds}
+    pipe = None
+    for nm in names:
+        if nm == "uni":
+            continue
+        f = VAR_DIR / nm / "preds.parquet"
+        if not f.exists():
+            (VAR_DIR / nm).mkdir(parents=True, exist_ok=True)
+            pipe = pipe or load_pipeline()
+            kw = dict(VARIANTS[nm]); use_cov = kw.pop("covariates", False)
+            cal = D["ret"].index
+            anchors = cal[cal >= pd.Timestamp(FC_CFG["first_anchor"])]
+            al.generate_forecasts(pipe, D["ret"], D["eligible"], anchors, ctx=FC_CFG["context_len"], H=FC_CFG["horizon"],
+                                  out_path=f, covariates=cov if use_cov else None,
+                                  anchors_per_call=kw.pop("anchors_per_call", FC_CFG["anchors_per_call"]), **kw)
+        preds[nm] = load_preds(f)
+    # classic long-short net PnL on ext_dev (same universe mask as the baseline)
+    Xb = build_inputs(base_preds, D)
+    classic_pnl = {k: bt_stats(books(Xb[f"classic{LAG}"][k], Xb, "LS"), Xb, "ext_dev")[1]["net"] for k in BT_CFG["classic"]}
+    V = vol_inputs(Xb, DEV_DIR)[0]
+    rows, S = [], {}
+    for nm in names:
+        r, S[nm] = evaluate_variant(nm, preds[nm], D, classic_pnl, V)
+        rows.append(r)
+    T = pd.DataFrame(rows).set_index("variant")
+    # paired tests vs the baseline (uni): IC difference, QLIKE / pinball Diebold-Mariano, Sharpe bootstrap
+    for nm in names:
+        if nm == "uni":
+            continue
+        T.loc[nm, "ic_diff_t_vs_uni"] = al.nw_tstat((S[nm]["ic"] - S["uni"]["ic"]).dropna(), NW)["t"]
+        T.loc[nm, "qlike_dm_t_vs_uni"] = al.dm_test(S[nm]["qlike"], S["uni"]["qlike"], NW)["t"]
+        T.loc[nm, "qlike_sc_dm_t_vs_uni"] = al.dm_test(S[nm]["qlike_sc"], S["uni"]["qlike_sc"], NW)["t"]
+        T.loc[nm, "pinball_dm_t_vs_uni"] = al.dm_test(S[nm]["pinball"], S["uni"]["pinball"], 0)["t"]
+        T.loc[nm, "sharpe_boot_p_vs_uni"] = al.sharpe_diff_bootstrap(S[nm]["pnl"], S["uni"]["pnl"])["p_one_sided"]
+    T.to_csv(VAR_DIR / "variants_2x2.csv")
+    pd.set_option("display.width", 250)
+    print(T.round(4).T.to_string())
+    return T
+
+
+# %% [markdown]
+# ## Stage `configs` (Phase C): configuration sweep C0-C4 on extended dev 2021-2024
+
+# %%
+# Sector map: forecasting/scratchpads/phase_sector_scratch_pad.md (research-agent classification 2026-09-17)
+SECTORS = {
+    "oil_gas": "GAZP ROSN LKOH NVTK TATN SNGS SNGSP TATNP SIBN RNFT BANEP TRNFP EUTR",
+    "metals_mining": "PLZL GMKN MAGN ALRS NLMK CHMF RUAL MTLR MTLRP SELG UGLD ENPG RASP VSMO",
+    "financials": "SBER SBERP T VTBR SVCB SPBE MOEX BSPB DOMRF CBOM RENI",
+    "tech_telecom": "YDEX VKCO POSI HEAD ASTR MTSS RTKM RTKMP",
+    "consumer": "OZON X5 MGNT LENT MVID BELU MDMG PRMD OZPH RAGR",
+    "transport_industrial": "AFLT FLOT FESH NMTP WUSH DELI IRKT UNAC SGZH UWGN PHOR AFKS SFIN SMLT PIKK CNRU",
+    "utilities": "IRAO FEES UPRO HYDR MSNG MRKC MSRS TORS",
+}
+SECTOR_OF = {t: sec for sec, ts in SECTORS.items() for t in ts.split()}
+SECTOR_INDEX = {"oil_gas": "MOEXOG", "metals_mining": "MOEXMM", "financials": "MOEXFN"}   # only these are cached
+
+
+def market_series(D) -> pd.DataFrame:
+    """IMOEX, sector indexes (ISS daily cache) and BR/Si/GD (main-session close, roll-masked) daily
+    log returns on the calendar; missing -> 0 so positions stay aligned with the stock contexts."""
+    cal = D["ret"].index
+    out = {"IMOEX": D["bench"]["imoex_ret"]}
+    for sec, idx in SECTOR_INDEX.items():   # all cached ISS daily files for the index, combined (no download)
+        parts = []
+        for f in sorted(CACHE.glob(f"stock_index_{idx}_24_*.parquet")):
+            x = pd.read_parquet(f)
+            if not x.empty:
+                parts.append(pd.Series(x["close"].to_numpy(), index=pd.to_datetime(x["begin"]).dt.normalize()))
+        c = pd.concat(parts)
+        c = c[~c.index.duplicated(keep="last")].sort_index()
+        out[idx] = np.log(c.reindex(cal)).diff()
+    fut = al.load_long(ROOT / "data_pipeline/data/processed/candles_10m/futures.parquet",
+                       tickers=["BR", "Si", "GD"], end=cal.max())
+    fr = al.futures_main_returns(fut, cal)
+    for k in fr.columns:
+        out[k] = fr[k]
+    return pd.DataFrame(out).reindex(cal).fillna(0.0)
+
+
+def broadcast(series: pd.Series, like: pd.DataFrame) -> pd.DataFrame:
+    return pd.DataFrame(np.repeat(series.reindex(like.index).to_numpy()[:, None], like.shape[1], 1), like.index, like.columns)
+
+
+def covariate_sets(D, M) -> dict:
+    base = covariate_panels(D)
+    ret = D["ret"]
+    sec = pd.DataFrame({t: M[SECTOR_INDEX[SECTOR_OF[t]]] if SECTOR_OF.get(t) in SECTOR_INDEX else M["IMOEX"]
+                        for t in ret.columns}).reindex(ret.index)
+    with_sec = {**base, "sector": sec}
+    with_fut = {**with_sec, **{k: broadcast(M[k], ret) for k in ["BR", "Si", "GD"]}}
+    return {"base": base, "sector": with_sec, "futures": with_fut}
+
+
+def group_fns(D):
+    val = D["value"].rolling(60, min_periods=30).median()
+    def sector(a, tick):
+        g = {}
+        for t in tick:
+            g.setdefault(SECTOR_OF.get(t, "misc"), []).append(t)
+        small = [t for k, v in g.items() if len(v) < 3 for t in v]
+        groups = [v for v in g.values() if len(v) >= 3]
+        return groups + ([small] if small else [])
+    def liquidity(a, tick):
+        v = val.loc[a, tick].sort_values(ascending=False)
+        h = len(v) // 2
+        return [list(v.index[:h]), list(v.index[h:])]
+    def random20(a, tick):
+        rng = np.random.default_rng(int(a.value // 86_400_000_000_000))
+        perm = list(rng.permutation(tick)); k = max(1, round(len(perm) / 20))
+        return [list(x) for x in np.array_split(perm, k)]
+    return {"sector": sector, "liquidity": liquidity, "random20": random20}
+
+
+CONFIGS = {   # name: (phase, spec)
+    "uni":        ("C0", dict()),
+    "xl":         ("C0", dict(xl=True)),
+    "cov":        ("C0", dict(cov="base")),
+    "xl_cov":     ("C0", dict(xl=True, cov="base")),
+    "xl_sector":  ("C1", dict(xl=True, groups="sector")),
+    "xl_market":  ("C1", dict(xl=True, extras=True)),
+    "xl_liq":     ("C1", dict(xl=True, groups="liquidity")),
+    "xl_rand20":  ("C1", dict(xl=True, groups="random20")),
+    "cov_sector": ("C2", dict(cov="sector")),
+    "cov_fut":    ("C2", dict(cov="futures")),
+    "ctx64":      ("C3", dict(ctx=64)),
+    "ctx128":     ("C3", dict(ctx=128)),
+    "ctx512":     ("C3", dict(ctx=512)),
+    "resid":      ("C4", dict(target="resid")),
+    "weekly":     ("C4", dict(target="weekly")),
+    "logprice":   ("C4", dict(target="logprice")),
+}
+
+
+def config_preds_path(name):
+    if name == "uni":
+        return FC_DIR / "preds.parquet"
+    return VAR_DIR / name / "preds.parquet"
+
+
+def run_config_forecast(name, spec, D, M, COV, G, pipe, anchors=None, out=None):
+    f = out or config_preds_path(name)
+    if f.exists():
+        return pd.read_parquet(f)
+    f.parent.mkdir(parents=True, exist_ok=True)
+    cal = D["ret"].index
+    if anchors is None:
+        anchors = cal[cal >= pd.Timestamp(FC_CFG["first_anchor"])]
+    target = spec.get("target", "ret")
+    panel, H, stride, ctx = D["ret"], FC_CFG["horizon"], 1, spec.get("ctx", FC_CFG["context_len"])
+    if target == "resid":
+        panel = al.loo_residual(D["ret"])
+    elif target == "weekly":
+        panel, H, stride, ctx = D["ret"].rolling(5, min_periods=5).sum(), 1, 5, 100
+    elif target == "logprice":
+        panel = np.log(D["close"])
+    xl = spec.get("xl", False)
+    p = al.generate_forecasts(pipe, panel, D["eligible"], anchors, ctx=ctx, H=H,
+                              anchors_per_call=1 if xl else FC_CFG["anchors_per_call"],
+                              out_path=None, covariates=COV[spec["cov"]] if "cov" in spec else None,
+                              cross_learning=xl, group_fn=G[spec["groups"]] if "groups" in spec else None,
+                              extra_series=M if spec.get("extras") else None, stride=stride)
+    if target == "logprice":            # levels -> cumulative log returns from the anchor
+        lvl = np.log(D["close"]).stack(); lvl.index.names = ["anchor", "ticker"]
+        base = p.join(lvl.rename("lvl"), on=["anchor", "ticker"])["lvl"].to_numpy()
+        qcols = [c for c in p.columns if c.startswith("q")]
+        p[qcols] = p[qcols].to_numpy() - base[:, None]
+    p.to_parquet(f)
+    return p
+
+
+def stage_configs(only=None):
+    VAR_DIR.mkdir(parents=True, exist_ok=True)
+    D = load_data(); M = market_series(D); COV = covariate_sets(D, M); G = group_fns(D)
+    names = only or list(CONFIGS)
+    pipe = None
+    import time
+    for nm in names:
+        if not config_preds_path(nm).exists():
+            pipe = pipe or load_pipeline()
+            t0 = time.time()
+            run_config_forecast(nm, CONFIGS[nm][1], D, M, COV, G, pipe)
+            print(f"[{nm}] forecast done in {time.time() - t0:.0f}s", flush=True)
+    base_preds = load_preds()
+    Xb = build_inputs(base_preds, D)
+    base_mask, base_sig = Xb["mask"], Xb[f"F{LAG}"]["MED_SIG"]
+    classic_pnl = {k: bt_stats(books(Xb[f"classic{LAG}"][k], Xb, "LS"), Xb, "ext_dev")[1]["net"]
+                   for k in BT_CFG["classic"]}
+    V = vol_inputs(Xb, DEV_DIR)[0]
+    rows, S = [], {}
+    for nm in list(CONFIGS):
+        f = config_preds_path(nm)
+        if not f.exists():
+            continue
+        spec = CONFIGS[nm][1]
+        feat = {"weekly": al.chronos_features_block, "logprice": al.chronos_features_cumulative}.get(spec.get("target"))
+        r, S[nm] = evaluate_variant(nm, load_preds(f), D, classic_pnl, V, tag=f"C_{CONFIGS[nm][0]}",
+                                    feat_fn=feat, base_mask=base_mask, base_sig=base_sig)
+        r["phase"] = CONFIGS[nm][0]; r["spec"] = json.dumps(spec)
+        r["trackB_comparable"] = spec.get("target") != "resid"
+        rows.append(r)
+        print(f"[{nm}] evaluated", flush=True)
+    T = pd.DataFrame(rows).set_index("variant")
+    for nm in T.index:
+        if nm == "uni":
+            continue
+        T.loc[nm, "ic_diff_t_vs_uni"] = al.nw_tstat((S[nm]["ic"] - S["uni"]["ic"]).dropna(), NW)["t"]
+        T.loc[nm, "qlike_sc_dm_t_vs_uni"] = al.dm_test(S[nm]["qlike_sc"], S["uni"]["qlike_sc"], NW)["t"]
+        T.loc[nm, "qlike_dm_t_vs_uni"] = al.dm_test(S[nm]["qlike"], S["uni"]["qlike"], NW)["t"]
+        T.loc[nm, "pinball_dm_t_vs_uni"] = al.dm_test(S[nm]["pinball"], S["uni"]["pinball"], 0)["t"]
+        T.loc[nm, "sharpe_boot_p_vs_uni"] = al.sharpe_diff_bootstrap(S[nm]["pnl"], S["uni"]["pnl"])["p_one_sided"]
+    T.to_csv(VAR_DIR / "configs_map.csv")
+    pd.set_option("display.width", 250)
+    print(T.drop(columns=["spec"]).round(3).T.to_string())
+    return T
+
+
+# %% [markdown]
+# ## Stage `improve` (step 3): mimic, combination, turnover control, vol calibration
+# Config-agnostic: `improve <config>` evaluates on that config's forecasts (default: baseline `uni`),
+# on the baseline universe mask, extended dev 2021-2024. Every variant is logged as a trial.
+
+# %%
+IMP_DIR = ROOT / "forecasting/runs/alpha_improve"
+MONTHLY = 21
+
+
+def eval_signal(name, sig, X, classic_pnl, fwd=None, n_tranches=None, period="ext_dev", tag="S3", log=True):
+    """IC (vs the matching-horizon forward return), LS net Sharpe/turnover, spanning alpha t vs the
+    classic LS books, Fama-MacBeth t with classic controls. Returns (row, pnl series, ic series)."""
+    nt = n_tranches or BT_CFG["rebalance"]["n_tranches"]
+    steps = tuple(range(LAG + 1, LAG + 1 + nt))
+    fwd = fwd if fwd is not None else al.forward_returns(X["D"]["ret"], steps)
+    lo, hi = period_bounds(period)
+    cal = X["cal"]; last_ok = cal[cal <= hi][-1 - max(steps)]
+    d = cal[(cal >= lo) & (cal <= last_ok)]
+    ic = al.ic_series(sig, fwd, X["mask"]).reindex(d).dropna()
+    r = al.nw_tstat(ic, 2 * (nt - 1))
+    W = books(sig, X, "LS")
+    st, bt = bt_stats(W, X, period, n_tranches=nt)
+    Xs = pd.DataFrame({k: classic_pnl[(k, nt)] for k in BT_CFG["classic"]}).reindex(bt.index)
+    Xs["IMOEX"] = np.expm1(X["D"]["bench"]["imoex_ret"]).reindex(bt.index)
+    span = al.ols_nw(bt["net"], Xs, lags=2 * nt)
+    C = X[f"classic{LAG}"]
+    fm = al.fama_macbeth(fwd, {"sig": sig, "mom_12_1": C["mom_12_1"], "rev_5d": C["rev_5d"], "rev_1d": C["rev_1d"],
+                               "lowvol_60d": C["lowvol_60d"], "size": C["size"]}, X["mask"], lags=2 * (nt - 1), dates=d)
+    row = dict(variant=name, rebalance_days=nt, ic=r["mean"], ic_t=r["t"], ls_net_sharpe=st.get("sharpe"),
+               ls_gross_sharpe=st.get("gross_sharpe"), turnover=st.get("turnover_ann"), breakeven_bps=st.get("breakeven_bps"),
+               span_alpha_ann=float(span.loc["const", "coef"] * 252), span_alpha_t=float(span.loc["const", "t"]),
+               fm_t=float(fm.loc["sig", "t"]))
+    if log:
+        al.append_trial(LEDGER, track="A", tag=tag, period=period, signal=name, book=f"LS_{nt}d", exec_lag=LAG,
+                        cost_bps=COST, borrow=BORROW, ic_t=r["t"], net_sharpe=st.get("sharpe"),
+                        daily_sr=(st.get("sharpe") or np.nan) / np.sqrt(252))
+    return row, bt["net"], ic
+
+
+def stage_improve(config="uni"):
+    out = IMP_DIR / config; out.mkdir(parents=True, exist_ok=True)
+    D = load_data()
+    base = build_inputs(load_preds(), D)
+    spec = CONFIGS[config][1]
+    feat = {"weekly": al.chronos_features_block, "logprice": al.chronos_features_cumulative}.get(spec.get("target"))
+    preds = load_preds(config_preds_path(config))
+    X = build_inputs(preds, D, feat); X["preds"] = preds
+    X["mask"] = base["mask"] & X[f"F{LAG}"]["MED"].notna()
+    C = X[f"classic{LAG}"]
+    chron = X[f"F{LAG}"]["MED_SIG"]
+    classic_pnl = {(k, nt): bt_stats(books(C[k], X, "LS"), X, "ext_dev", n_tranches=nt)[1]["net"]
+                   for k in BT_CFG["classic"] for nt in (BT_CFG["rebalance"]["n_tranches"], MONTHLY)}
+    rows, pnl, ics = [], {}, {}
+    def add(name, sig, nt=None, tag="S3"):
+        r, p, i = eval_signal(name, sig, X, classic_pnl, n_tranches=nt, tag=f"{tag}_{config}")
+        rows.append(r); pnl[name] = p; ics[name] = i
+        print(f"  {name:28s} IC {r['ic']:+.3f} (t {r['ic_t']:+.2f})  netSR {r['ls_net_sharpe']:+.2f}  "
+              f"TO {r['turnover']:5.1f}  span t {r['span_alpha_t']:+.2f}  FM t {r['fm_t']:+.2f}", flush=True)
+    print(f"[{config}] A) Chronos-mimic")
+    add("chronos", chron, tag="S3ref")
+    fit, oos = al.rolling_xs_fit(chron, al.context_features(D["ret"]), X["mask"])
+    mimic_r2 = float((oos.loc["2021":"2024"] ** 2).mean())
+    add("mimic", fit, tag="S3mimic")
+    add("chronos_minus_mimic", al.xs_standardize(chron, X["mask"]) - fit, tag="S3mimic")
+    print(f"  mimic out-of-sample R^2 of the Chronos signal (mean per-date corr^2): {mimic_r2:.3f}")
+    print(f"[{config}] B) combination (weights = trailing realized Fama-MacBeth slopes)")
+    fwd = X[f"fwd{LAG}"]
+    csig = {k: C[k] for k in BT_CFG["classic"]}
+    slopes_all = al.xs_slopes(fwd, {**csig, "chronos": chron}, X["mask"])
+    comp_c, Wc = al.rolling_composite(fwd, csig, X["mask"], horizon=max(STEPS[LAG]))
+    comp_a, Wa = al.rolling_composite(fwd, {**csig, "chronos": chron}, X["mask"], horizon=max(STEPS[LAG]), slopes=slopes_all)
+    add("combo_classic", comp_c, tag="S3combo"); add("combo_plus_chronos", comp_a, tag="S3combo")
+    print(f"[{config}] C) turnover control")
+    for hl in (5, 10, 21):
+        add(f"chronos_smooth_hl{hl}", al.smooth_signal(chron, X["mask"], hl), tag="S3turn")
+    add("chronos_monthly", chron, nt=MONTHLY, tag="S3turn")
+    add("chronos_smooth_hl10_monthly", al.smooth_signal(chron, X["mask"], 10), nt=MONTHLY, tag="S3turn")
+    add("combo_plus_chronos_hl10", al.smooth_signal(comp_a, X["mask"], 10), tag="S3turn")
+    add("combo_classic_hl10", al.smooth_signal(comp_c, X["mask"], 10), tag="S3turn")
+    T = pd.DataFrame(rows).set_index("variant")
+    # paired: Chronos' contribution inside the composite, and each variant vs the raw Chronos book
+    boot = al.sharpe_diff_bootstrap(pnl["combo_plus_chronos"], pnl["combo_classic"])
+    sp = al.ols_nw(pnl["combo_plus_chronos"], pd.DataFrame({"combo_classic": pnl["combo_classic"],
+                   **{k: classic_pnl[(k, 5)] for k in BT_CFG["classic"]}}).reindex(pnl["combo_plus_chronos"].index), lags=10)
+    extra = dict(mimic_oos_r2=mimic_r2,
+                 combo_chronos_vs_classic=dict(sharpe_diff=boot["diff"], boot_p=boot["p_one_sided"],
+                                               ic_diff_t=al.nw_tstat((ics["combo_plus_chronos"] - ics["combo_classic"]).dropna(), NW)["t"],
+                                               alpha_over_classic_combo_t=float(sp.loc["const", "t"]),
+                                               mean_weight_chronos=float(Wa["chronos"].loc["2021":"2024"].mean())))
+    for nm in T.index:
+        if nm != "chronos" and T.loc[nm, "rebalance_days"] == 5:
+            T.loc[nm, "sharpe_boot_p_vs_chronos"] = al.sharpe_diff_bootstrap(pnl[nm], pnl["chronos"])["p_one_sided"]
+    print(f"[{config}] D) vol calibration (Chronos σ level rescaled by trailing realized/forecast ratio)")
+    steps = STEPS[0]
+    rv_fwd = sum(D["rv"].shift(-h) for h in steps)
+    vc = al.vol_chronos(X["F0"]["SIG"])
+    V = vol_inputs(base, DEV_DIR)[0]
+    d = ic_dates(X, "ext_dev", steps)
+    scale = al.rolling_vol_scale(vc, rv_fwd, X["mask"], horizon=max(steps))
+    vcal = vc.mul(scale, axis=0)
+    m = X["mask"].loc[d] & vcal.loc[d].notna() & V["ewma"].loc[d].notna() & V["garch"].loc[d].notna()
+    Lc = al.vol_loss_panel(rv_fwd.loc[d], vcal.loc[d], m); L0 = al.vol_loss_panel(rv_fwd.loc[d], vc.loc[d], m)
+    vol = dict(qlike_raw=float(L0.mean()), qlike_calibrated=float(Lc.mean()),
+               dm_t_calibrated_vs_raw=al.dm_test(Lc, L0, NW)["t"])
+    for k in ["ewma", "garch", "har_daily"]:
+        # competitors get the identical causal level recalibration (fair: calibration is not Chronos-specific)
+        sk = al.rolling_vol_scale(V[k], rv_fwd, X["mask"], horizon=max(steps))
+        Lk = al.vol_loss_panel(rv_fwd.loc[d], V[k].mul(sk, axis=0).loc[d], m)
+        vol[f"dm_t_vs_{k}_both_calibrated"] = al.dm_test(Lc, Lk, NW)["t"]      # negative = Chronos better
+    p1 = preds[preds.h == 1]
+    s1 = np.sqrt(scale).reindex(p1["anchor"]).to_numpy()
+    for lvl in (0.05, 0.1):
+        q = (p1["q0.5"] + (p1[f"q{lvl:g}"] - p1["q0.5"]) * s1).rename("q")
+        qw = pd.concat([p1[["anchor", "ticker"]], q], axis=1).pivot(index="anchor", columns="ticker", values="q")
+        vol[f"q{lvl:g}_hit_calibrated"] = al.var_coverage(D["ret"], qw.reindex(index=X["cal"], columns=D["ret"].columns).loc[d],
+                                                           lvl, X["mask"].loc[d])["hit_rate"]
+    al.append_trial(LEDGER, track="B", tag=f"S3volcal_{config}", period="ext_dev", signal="chronos_sig_calibrated",
+                    book="vol_forecast", exec_lag=0, cost_bps=np.nan, borrow=np.nan, net_sharpe=np.nan, daily_sr=np.nan)
+    extra["vol_calibration"] = vol
+    print(json.dumps(extra, indent=1, default=float))
+    T.to_csv(out / "improve_table.csv")
+    (out / "improve_extra.json").write_text(json.dumps(extra, indent=1, default=float))
+    return T, extra
+
+
+# %% [markdown]
+# ## Stage `rvtarget` (step 3, Track B / I1): Chronos forecasts the log realized-variance series itself
+
+# %%
+RV_EPS = 1e-7   # floor for log(RV): ~0.03% daily vol; days with no trades would otherwise be -inf
+
+
+def rv_forecast_path(name):
+    return VAR_DIR / f"rv_{name}" / "preds.parquet"
+
+
+def stage_rvtarget(threads=3):
+    import torch
+    torch.set_num_threads(threads)
+    D = load_data()
+    panel = np.log(D["rv"].clip(lower=0) + RV_EPS)
+    cal = D["ret"].index
+    anchors = cal[cal >= pd.Timestamp(FC_CFG["first_anchor"])]
+    pipe = None
+    for name, kw in {"uni": dict(), "xl": dict(cross_learning=True, anchors_per_call=1)}.items():
+        f = rv_forecast_path(name)
+        if f.exists():
+            continue
+        f.parent.mkdir(parents=True, exist_ok=True)
+        pipe = pipe or load_pipeline()
+        kw = dict(kw); apc = kw.pop("anchors_per_call", FC_CFG["anchors_per_call"])
+        al.generate_forecasts(pipe, panel, D["eligible"], anchors, ctx=FC_CFG["context_len"], H=5,
+                              anchors_per_call=apc, out_path=f, **kw)
+        print(f"[rv_{name}] forecast done", flush=True)
+    return evaluate_rvtarget(D)
+
+
+def rv_var_forecast(preds, cal, cols):
+    """Σ_{h=1..5} E[RV_{d+h}] from log-RV quantiles (E[exp] per step, minus the floor)."""
+    qcols = [f"q{q:g}" for q in al.NATIVE_QUANTILES]
+    e = al.mean_exp_quantiles(preds[qcols].to_numpy()) - RV_EPS
+    s = pd.Series(np.maximum(e, 1e-10), index=pd.MultiIndex.from_frame(preds[["anchor", "ticker"]]))
+    return s.groupby(level=[0, 1]).sum().unstack("ticker").reindex(index=cal, columns=cols)
+
+
+def evaluate_rvtarget(D):
+    base = build_inputs(load_preds(), D)
+    V = vol_inputs(base, DEV_DIR)[0]
+    steps = STEPS[0]
+    rv_fwd = sum(D["rv"].shift(-h) for h in steps)
+    d = ic_dates(base, "ext_dev", steps)
+    models = {k: V[k] for k in ["ewma", "garch", "har_daily", "har_rv_ceiling"]}
+    models["chronos_ret_uni"] = V["chronos"]
+    xlp = config_preds_path("xl")
+    if xlp.exists():
+        models["chronos_ret_xl"] = al.vol_chronos(build_inputs(load_preds(xlp), D)["F0"]["SIG"])
+    for nm in ["uni", "xl"]:
+        f = rv_forecast_path(nm)
+        if f.exists():
+            models[f"chronos_rv_{nm}"] = rv_var_forecast(pd.read_parquet(f), D["ret"].index, D["ret"].columns)
+    m = base["mask"].loc[d]
+    for v in models.values():
+        m &= v.loc[d].notna()
+    rows, L, Lc = [], {}, {}
+    for k, v in models.items():
+        sc = al.rolling_vol_scale(v, rv_fwd, base["mask"], horizon=max(steps))      # identical causal calibration for all
+        L[k] = al.vol_loss_panel(rv_fwd.loc[d], v.loc[d], m)
+        Lc[k] = al.vol_loss_panel(rv_fwd.loc[d], v.mul(sc, axis=0).loc[d], m)
+        mz = al.mincer_zarnowitz(rv_fwd.loc[d], v.loc[d], m)
+        rows.append(dict(model=k, qlike_raw=float(L[k].mean()), qlike_calibrated=float(Lc[k].mean()), mz_r2_log=mz["r2_log"]))
+    T = pd.DataFrame(rows).set_index("model")
+    for cand in [k for k in models if k.startswith("chronos_rv")]:
+        for k in ["ewma", "garch", "har_daily", "har_rv_ceiling", "chronos_ret_uni", "chronos_ret_xl"]:
+            if k in L:
+                T.loc[cand, f"dm_raw_vs_{k}"] = al.dm_test(L[cand], L[k], NW)["t"]
+                T.loc[cand, f"dm_cal_vs_{k}"] = al.dm_test(Lc[cand], Lc[k], NW)["t"]
+        al.append_trial(LEDGER, track="B", tag="S3rv", period="ext_dev", signal=cand, book="vol_forecast",
+                        exec_lag=0, cost_bps=np.nan, borrow=np.nan, net_sharpe=np.nan, daily_sr=np.nan)
+    out = IMP_DIR / "rvtarget"; out.mkdir(parents=True, exist_ok=True)
+    T.to_csv(out / "rvtarget_table.csv")
+    pd.set_option("display.width", 250)
+    print(T.round(3).T.to_string())
+    return T
+
+
+# %% [markdown]
+# ## Stage `select` (after Phase C): pick winners by the pre-stated rules, C3 follow-up, step 3 on winners
+# Track A winner: highest `fm_t_over_uni` (incremental over the baseline Chronos signal + classic
+#   factors) among configs with fm_t_over_uni > 2; none -> baseline `uni`.
+# Track B winner: most negative `qlike_sc_dm_t_vs_uni` among comparable configs with t < -2; none -> `uni`.
+
+# %%
+def select_winners(T: pd.DataFrame) -> dict:
+    a = T[(T.index != "uni") & (T["fm_t_over_uni"] > 2)]
+    b = T[(T.index != "uni") & (T["trackB_comparable"].astype(bool)) & (T["qlike_sc_dm_t_vs_uni"] < -2)]
+    return dict(track_a=a["fm_t_over_uni"].idxmax() if len(a) else "uni",
+                track_b=b["qlike_sc_dm_t_vs_uni"].idxmin() if len(b) else "uni")
+
+
+def stage_select(run_followups=True):
+    T = pd.read_csv(VAR_DIR / "configs_map.csv", index_col=0)
+    W = select_winners(T)
+    print("winners (pre-stated rules):", W, flush=True)
+    followups = []
+    for track, cfg in W.items():
+        if cfg == "uni" or not run_followups:
+            continue
+        for ctx in (128, 512):                     # C3 follow-up on the winning config
+            nm = f"{cfg}_ctx{ctx}"
+            if nm not in CONFIGS:
+                CONFIGS[nm] = ("C3b", {**CONFIGS[cfg][1], "ctx": ctx})
+            followups.append(nm)
+    if followups:
+        T = stage_configs(sorted(set(followups)))  # forecasts the new ones, re-evaluates the full map
+        W = select_winners(T)
+        print("winners after C3 follow-up:", W, flush=True)
+    (VAR_DIR / "winners.json").write_text(json.dumps(W, indent=1))
+    for cfg in sorted(set(W.values())):
+        print(f"=== step 3 on {cfg} ===", flush=True)
+        stage_improve(cfg)
+    return W
+
+
 # %%
 if __name__ == "__main__" and len(sys.argv) > 1:
     stage = sys.argv[1]
     if stage == "data":
         stage_data()
+    elif stage == "data_holdout":   # data preparation + QA only; no forecasts, no evaluation on 2025+
+        cfg_h = yaml.safe_load(open(HERE / "configs/alpha_forecast_holdout.yaml"))
+        stage_data(cfg_h, ROOT / "forecasting/runs/alpha_data_holdout", allow_download=False)
     elif stage == "forecast":
         stage_forecast(smoke="--smoke" in sys.argv)
     elif stage == "dev":
@@ -534,6 +1109,16 @@ if __name__ == "__main__" and len(sys.argv) > 1:
             stage_dev(FC_DIR / "preds_smoke.parquet", out_dir=scratch, tag="smoke", ledger=scratch / "ledger_smoke.csv")
         else:
             stage_dev(tag=sys.argv[sys.argv.index("--tag") + 1] + "_dev" if "--tag" in sys.argv else "v1_dev")
+    elif stage == "variants":
+        stage_variants()
+    elif stage == "rvtarget":
+        stage_rvtarget()
+    elif stage == "select":
+        stage_select()
+    elif stage == "improve":
+        stage_improve(sys.argv[2] if len(sys.argv) > 2 else "uni")
+    elif stage == "configs":
+        stage_configs(sys.argv[2].split(",") if len(sys.argv) > 2 else None)
     elif stage == "test":
         stage_test(tag=sys.argv[sys.argv.index("--tag") + 1] + "_test" if "--tag" in sys.argv else "v1_test")
     else:

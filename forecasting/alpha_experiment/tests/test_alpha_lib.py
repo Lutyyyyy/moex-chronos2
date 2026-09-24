@@ -232,11 +232,12 @@ class FakePipe:
     def __init__(self):
         self.calls = 0
 
-    def predict_quantiles(self, inputs, prediction_length, quantile_levels):
+    def predict_quantiles(self, inputs, prediction_length, quantile_levels, **kw):
         import torch
-        self.calls += 1
+        self.calls += 1; self.kw = kw; self.last_inputs = inputs
         z = sstats.norm.ppf(quantile_levels)
-        out = [torch.tensor(np.tile(x[-1] + 0.01 * z, (1, prediction_length, 1)), dtype=torch.float32) for x in inputs]
+        tgt = [x["target"] if isinstance(x, dict) else x for x in inputs]
+        out = [torch.tensor(np.tile(x[-1] + 0.01 * z, (1, prediction_length, 1)), dtype=torch.float32) for x in tgt]
         return out, [o[..., len(quantile_levels) // 2] for o in out]
 
 
@@ -335,3 +336,133 @@ def test_var_coverage_ignores_missing_forecasts():
     q = pd.DataFrame(sstats.norm.ppf(0.05), idx, cols); q.iloc[200:] = np.nan    # half the forecasts missing
     r = al.var_coverage(ret, q, 0.05, pd.DataFrame(True, idx, cols))
     assert r["n"] == 199 * 5 + 5 and r["hit_rate"] == pytest.approx(0.05, abs=0.02)
+
+
+def test_covariates_aligned_to_target_dates_with_gaps():
+    ret, elig = _toy_panel(n=300, k=3)
+    ret.iloc[100:103, 1] = np.nan                                    # gap inside T1's context
+    cov = pd.DataFrame(np.arange(300.0)[:, None].repeat(3, axis=1), ret.index, ret.columns)   # value = row number
+    a = ret.index[280]
+    tick, inp = al.forecast_contexts(ret, elig, a, ctx=250, covariates={"c": cov})
+    d = inp[tick.index("T1")]
+    s = ret["T1"].loc[:a].dropna().iloc[-250:]
+    assert len(d["target"]) == len(d["past_covariates"]["c"]) == 250
+    assert np.allclose(d["past_covariates"]["c"], [ret.index.get_loc(x) for x in s.index])   # same dates, gap skipped
+    assert d["past_covariates"]["c"][-1] == 280                                            # nothing after the anchor
+
+
+def test_cross_learning_one_anchor_per_call_and_kwargs():
+    ret, elig = _toy_panel()
+    with pytest.raises(ValueError, match="anchors_per_call=1"):
+        al.generate_forecasts(FakePipe(), ret, elig, ret.index[260:262], cross_learning=True, progress=False)
+    pipe = FakePipe()
+    out = al.generate_forecasts(pipe, ret, elig, ret.index[260:263], anchors_per_call=1, cross_learning=True,
+                                progress=False)
+    assert pipe.calls == 3 and pipe.kw["cross_learning"] is True and out["anchor"].nunique() == 3
+    with pytest.raises(ValueError, match="exceeds batch_size"):
+        al.generate_forecasts(FakePipe(), ret, elig, ret.index[260:261], anchors_per_call=1, cross_learning=True,
+                              batch_size=3, progress=False)
+
+
+def test_groups_and_extra_series_are_dropped():
+    ret, elig = _toy_panel(k=6)
+    extras = pd.DataFrame({"IMOEX": 0.001, "BR": -0.002}, index=ret.index)
+    pipe = FakePipe()
+    gf = lambda a, tick: [tick[:3], tick[3:]]
+    out = al.generate_forecasts(pipe, ret, elig, ret.index[260:262], anchors_per_call=1, cross_learning=True,
+                                group_fn=gf, extra_series=extras, progress=False)
+    assert pipe.calls == 4                                              # 2 anchors x 2 groups
+    assert len(pipe.last_inputs) == 3 + 2                                # group members + 2 extras
+    assert set(out["ticker"]) == set(ret.columns) and len(out) == 2 * 6 * 6   # extras never in output
+    row = out[(out.anchor == ret.index[261]) & (out.ticker == "T4") & (out.h == 1)].iloc[0]
+    assert row["q0.5"] == pytest.approx(ret.loc[ret.index[261], "T4"], abs=1e-6)   # ticker/output alignment kept
+
+
+def test_stride_contexts_are_blocks_ending_at_anchor():
+    ret, elig = _toy_panel(n=300, k=2)
+    r5 = ret.rolling(5).sum()
+    a = ret.index[299]
+    _, inp = al.forecast_contexts(r5, elig, a, ctx=40, stride=5)
+    assert len(inp[0]) == 40 and inp[0][-1] == pytest.approx(r5.loc[a, "T0"])
+    assert inp[0][-2] == pytest.approx(r5["T0"].iloc[294])
+
+
+def test_loo_residual_nan_aware():
+    ret = pd.DataFrame({"A": [0.03, 0.01], "B": [0.00, np.nan], "C": [0.00, 0.01], "D": [0.01, 0.04]})
+    r = al.loo_residual(ret)
+    assert r.loc[0, "A"] == pytest.approx(0.03 - (0.00 + 0.00 + 0.01) / 3)
+    assert r.loc[1, "A"] == pytest.approx(0.01 - (0.01 + 0.04) / 2) and np.isnan(r.loc[1, "B"])
+
+
+def test_futures_returns_masked_on_roll():
+    days = pd.bdate_range("2024-03-11", periods=3)
+    bars = pd.DataFrame({"ticker": "BR", "timestamp": [pd.Timestamp(f"{d.date()} 18:40") for d in days],
+                         "contract": ["BRJ4", "BRK4", "BRK4"], "close": [80.0, 85.0, 86.0]})
+    r = al.futures_main_returns(bars, days)["BR"]
+    assert np.isnan(r.iloc[1]) and r.iloc[2] == pytest.approx(math.log(86 / 85))
+
+
+def test_block_and_cumulative_features():
+    u = al.NATIVE_QUANTILES; z = sstats.norm.ppf(u); a = pd.Timestamp("2022-01-10")
+    blk = pd.DataFrame([{"anchor": a, "ticker": "A", "h": 1, **{f"q{x:g}": 0.01 + 0.05 * y for x, y in zip(u, z)}}])
+    fb = al.chronos_features_block(blk).loc[(a, "A")]
+    _, v = al.quantile_moments(0.05 * z, u)
+    assert fb["MED"] == pytest.approx(0.01) and fb["SIG"] == pytest.approx(math.sqrt(v))
+    # cumulative: C_h ~ N(0.001 h, 0.01^2 h)
+    rows = [{"anchor": a, "ticker": "A", "h": h, **{f"q{x:g}": 0.001 * h + 0.01 * math.sqrt(h) * y for x, y in zip(u, z)}}
+            for h in range(1, 7)]
+    fc = al.chronos_features_cumulative(pd.DataFrame(rows), steps=(2, 3, 4, 5, 6)).loc[(a, "A")]
+    _, v1 = al.quantile_moments(0.01 * z, u)
+    assert fc["MED"] == pytest.approx(0.005) and fc["SIG"] == pytest.approx(math.sqrt(5 * v1), rel=1e-6)
+
+
+# ─── step-3 improvement helpers (causality is the point) ─────────────────────
+
+def test_rolling_xs_fit_recovers_mimic_and_is_causal():
+    rng = np.random.default_rng(21)
+    idx = pd.bdate_range("2021-01-04", periods=320); cols = [f"T{i}" for i in range(40)]
+    ret = pd.DataFrame(rng.standard_normal((320, 40)) * 0.02, idx, cols)
+    feats = al.context_features(ret)
+    mask = pd.DataFrame(True, idx, cols)
+    target = 2 * feats["m20"] - feats["s60"]                               # a signal that IS a mimic
+    fit, oos = al.rolling_xs_fit(target, feats, mask, window=60, refit_every=10, min_rows=500)
+    assert oos.iloc[-50:].mean() > 0.95
+    t2 = target.copy(); t2.iloc[250:] = rng.standard_normal((70, 40))        # change the future only
+    fit2, _ = al.rolling_xs_fit(t2, feats, mask, window=60, refit_every=10, min_rows=500)
+    assert np.allclose(fit.iloc[:251].fillna(0).to_numpy(), fit2.iloc[:251].fillna(0).to_numpy())
+
+
+def test_rolling_composite_uses_only_realized_slopes():
+    rng = np.random.default_rng(22)
+    idx = pd.bdate_range("2021-01-04", periods=300); cols = [f"T{i}" for i in range(30)]
+    mask = pd.DataFrame(True, idx, cols)
+    a = pd.DataFrame(rng.standard_normal((300, 30)), idx, cols); b = pd.DataFrame(rng.standard_normal((300, 30)), idx, cols)
+    fwd = 0.01 * al.xs_standardize(a, mask) + 0.01 * pd.DataFrame(rng.standard_normal((300, 30)), idx, cols)
+    comp, W = al.rolling_composite(fwd, {"a": a, "b": b}, mask, horizon=6, window=100, min_obs=50)
+    assert W["a"].iloc[-1] > 5 * abs(W["b"].iloc[-1])                        # learns that only `a` predicts
+    fwd2 = fwd.copy(); fwd2.iloc[200:] = 0.0                                 # future returns changed
+    _, W2 = al.rolling_composite(fwd2, {"a": a, "b": b}, mask, horizon=6, window=100, min_obs=50)
+    assert np.allclose(W.iloc[:206].fillna(0), W2.iloc[:206].fillna(0))      # weights at d<=205 use slopes <=199
+
+
+def test_smooth_signal_is_causal_and_identity_at_zero():
+    rng = np.random.default_rng(23)
+    idx = pd.bdate_range("2021-01-04", periods=50); cols = [f"T{i}" for i in range(12)]
+    sig = pd.DataFrame(rng.standard_normal((50, 12)), idx, cols); mask = pd.DataFrame(True, idx, cols)
+    assert np.allclose(al.smooth_signal(sig, mask, 0), al.xs_standardize(sig, mask))
+    s1 = al.smooth_signal(sig, mask, 5); sig2 = sig.copy(); sig2.iloc[30:] = 0
+    assert np.allclose(s1.iloc[:30], al.smooth_signal(sig2, mask, 5).iloc[:30])
+
+
+def test_rolling_vol_scale_lagged():
+    idx = pd.bdate_range("2021-01-04", periods=200); cols = ["A", "B"]
+    fc = pd.DataFrame(1.0, idx, cols); rv = pd.DataFrame(2.0, idx, cols); rv.iloc[150:] = 50.0
+    sc = al.rolling_vol_scale(fc, rv, pd.DataFrame(True, idx, cols), horizon=5, window=60, min_obs=20)
+    assert sc.iloc[154] == pytest.approx(2.0)                                # future spike not yet visible
+
+
+def test_mean_exp_quantiles_lognormal():
+    u = np.array(al.NATIVE_QUANTILES); mu, sd = -9.0, 0.5
+    Q = mu + sd * sstats.norm.ppf(u)
+    got = al.mean_exp_quantiles(Q, u)
+    assert got == pytest.approx(math.exp(mu + sd ** 2 / 2), rel=0.03)      # grid-truncated tails -> small bias
