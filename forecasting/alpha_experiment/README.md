@@ -173,6 +173,122 @@ Code, gate, selection rules and thresholds are identical to the pre-registration
 - **Track A:** real cross-sectional IC with a small incremental component (Fama-MacBeth t≈2). The net long-short book is spanned by the AR(1)/trailing-mean and low-vol books at 2.7× their turnover.
 - **Track B:** Chronos σ from daily returns is not better than EWMA or GARCH(1,1), and its tails were too narrow in 2024.
 
-### Next
+### Further data corrections (2026-09-24, before Phase C)
+- **Unpaid dividend:** MGNT's 560 RUB 9M2024 dividend (2025-01-09) was never approved: the EGM on 2024-12-26 failed for lack of quorum. It is excluded via `KNOWN_UNPAID_DIVIDENDS`.
+- **Future record dates:** dividends whose record date falls after the last trading day are no longer applied. They had produced fake +3–8% jumps on 2026-09-17 for TATN, TATNP, NVTK, SIBN and BSPB, in the holdout panel only.
+- **Verification:** the dev panel returns are byte-identical after these fixes.
 
-The holdout (2025-01 → 2026-09) is **still sealed**. The improvement wave (plan Part 3, re-prioritized: Chronos-mimic, combination, turnover control, cross_learning, residual target, RV target for Track B) runs next on 2021–2024 corrected data.
+All results below use the corrected data, over **ext_dev = 2021–2024** (2024 was merged into dev after the one-shot test, as pre-registered).
+
+### Phase C: Chronos configuration sweep (ext_dev 2021–2024)
+Sixteen configurations were run through the same frozen pipeline. The universe is the baseline's own evaluation mask, so coverage is 1.0 for all. Winners were selected by rules fixed in code before the sweep ran:
+- **Track A:** the highest `fm_t_over_uni`, provided it exceeds 2. This is the Fama-MacBeth t of the config's MED_SIG, controlling for the uni Chronos signal plus mom, rev_5d, rev_1d, lowvol and size.
+- **Track B:** the most negative scaled-QLIKE DM t vs uni, provided it is below −2. Only configs with a comparable target qualify.
+- **Follow-up (C3b):** context lengths 128 and 512 were then re-run on each winner.
+
+| Config | What changes vs uni | IC t | FM t | FM t over uni | Spanning t | Net Sharpe | QLIKE-sc DM t vs uni |
+|---|---|---:|---:|---:|---:|---:|---:|
+| uni | univariate, target only, context 250 | 6.37 | 2.70 | — | −0.15 | 1.17 | — |
+| xl | cross_learning over the full cross-section | 5.47 | 3.18 | 1.88 | −1.02 | 1.01 | −3.77 |
+| cov | past covariates: IMOEX return, own Δlog traded value | 6.39 | 3.51 | 2.60 | −0.22 | 1.26 | −3.15 |
+| xl_cov | xl + cov | 6.20 | 3.23 | 2.61 | −0.40 | 1.47 | −1.41 |
+| xl_sector | cross_learning within sectors | 5.99 | 3.07 | 2.52 | −0.50 | 1.19 | −1.86 |
+| xl_market | cross_learning, with the market series (IMOEX, sector indexes, BR/Si/GD) added to the group | 5.70 | 3.44 | 2.39 | −0.95 | 1.19 | −3.72 |
+| xl_liq | cross_learning within liquidity halves | 5.36 | 2.37 | 1.09 | −1.42 | 0.90 | **−5.23** |
+| xl_rand20 | cross_learning within random ~20-name groups | 6.11 | 3.47 | 2.20 | −0.53 | 1.18 | −3.99 |
+| cov_sector | cov + own-sector index return | 6.48 | 3.69 | 2.74 | 0.18 | 1.34 | −3.53 |
+| **cov_fut** | cov_sector + Brent / USD-RUB / gold futures (roll-masked) | 6.96 | 4.70 | **4.09** | 0.82 | 1.57 | −4.47 |
+| ctx64 / ctx128 / ctx512 | context length | 4.79 / 4.76 / 5.40 | 2.76 / 2.23 / 1.77 | 1.89 / 0.77 / −0.48 | −1.39 / −1.94 / −0.45 | 1.22 / 0.80 / 0.77 | 0.13 / −0.77 / 0.27 |
+| resid | leave-one-out market-residual target | 5.77 | 3.35 | 2.22 | −0.20 | 1.82 | 1.23 |
+| weekly | weekly-aggregated target | 5.39 | 3.18 | 2.28 | −0.34 | 1.24 | 1.61 |
+| logprice | log-price target | 2.59 | 1.02 | 0.06 | −0.51 | −0.15 | 1.06 |
+| cov_fut_ctx128 / 512 | C3b follow-up | 5.75 / 6.33 | 4.26 / 3.23 | 3.21 / 1.83 | −0.47 / 0.07 | 1.41 / 1.20 | −4.63 / −2.99 |
+| xl_liq_ctx128 / 512 | C3b follow-up | 5.58 / 4.69 | 3.25 / 1.74 | 1.88 / 0.14 | −1.73 / −1.74 | 1.02 / 0.59 | −3.74 / −3.15 |
+
+The full table, including IC means, QLIKE and pinball loss, is in `forecasting/runs/alpha_variants/configs_map.csv`.
+
+**Winners (unchanged after C3b):** Track A = `cov_fut`, Track B = `xl_liq`.
+- **No configuration has a net spanning alpha t above 0.82.** Covariates improve the ranking, cross-learning improves the return-based σ, and none of it adds net return beyond the classic books.
+
+### Step 3: improvements on the winners (and on uni and cov for reference)
+- **Chronos-mimic.** A causal rolling cross-sectional regression of MED_SIG on cheap trailing statistics of each name's own history. The *extended* mimic adds the covariate information Chronos saw:
+  - trailing 250-day β to IMOEX;
+  - traded-value dynamics;
+  - own-sector index trend;
+  - per-name exposure × trend of BR, Si, GD and IMOEX.
+
+  The residual, `chronos_minus_mimic_ext`, is the Chronos-specific part, and it goes through the identical evaluation. **Caveat (independent review):** the mimic is linear, so the residual is an *upper bound* on Chronos-specific skill. It can include nonlinear use of the same inputs.
+- **Combination.** A causal rolling Fama-MacBeth-weighted composite of the classic signals, with and without Chronos.
+- **Turnover control.** EMA smoothing (half-life 5/10/21 days) and monthly rebalancing.
+
+| Signal | uni | cov | **cov_fut (winner A)** | xl_liq (winner B) |
+|---|---|---|---|---|
+| Chronos: FM t / spanning t / net SR | 2.70 / −0.15 / 1.17 | 3.51 / −0.22 / 1.26 | 4.70 / 0.82 / 1.57 | 2.37 / −1.42 / 0.90 |
+| Mimic out-of-sample R² (plain / extended) | 0.45 / — | 0.44 / 0.47 | 0.44 / 0.47 | 0.39 / 0.42 |
+| Mimic: net SR / spanning t | 1.99 / 1.56 | 2.04 / 1.73 | 2.06 / 1.44 | 2.17 / 1.58 |
+| Chronos − mimic: FM t | 0.69 | 1.72 | 2.76 | 0.26 |
+| **Chronos − extended mimic: FM t / spanning t / net SR** | — | 1.49 / −1.41 / −0.67 | **2.47 / −0.43 / −0.38** | 0.31 / −2.18 / −1.29 |
+| Combo: Chronos mean weight / alpha over classic combo t | 0.0007 / −0.55 | 0.0010 / −0.36 | 0.0020 / −0.12 | 0.0007 / −1.69 |
+| Best turnover-controlled variant (spanning t) | hl5: 0.42 | hl5: 0.77 | hl5: 1.46 | hl5: 0.40 |
+
+**Quantile-shape signals.** These are skew, up/down asymmetry, tail weight, downside and P(up) from the 21 quantiles.
+- On uni, every shape signal's Chronos-specific FM t is ≤ 1.09.
+- On cov_fut, only P(up) is strong: IC t 7.05, and its specific part has FM t 3.65. But P(up) is another reading of the same location forecast. Controlling for MED_SIG its FM t is 1.68, and its spanning t is 0.84.
+- Robust-spread σ (IQR-based) is no better than the moment-based σ.
+
+**Return-based σ, calibrated** (step 3 vol calibration, a causal rolling scale). Calibration helps Chronos itself: DM t vs raw is −2.3 (cov_fut) and −2.2 (xl_liq). When EWMA and GARCH are calibrated the same way, Chronos is **not better**: DM t is −0.88 / −0.30 (cov_fut) and −0.95 / −0.74 (xl_liq).
+
+### `cov_fut` robustness checks (diagnostics, not new trials; [`diagnostics/covfut_stability.py`](diagnostics/covfut_stability.py))
+- **Look-ahead audit: clean.**
+  - The ISS daily closes of the sector indexes (MOEXOG/MM/FN) and of IMOEX equal the ≤18:50 main-session close on 99–100% of 2020–2024 days.
+  - The futures use the same ≤18:50 window, and returns across a contract roll are masked.
+  - The zero-filled covariate share on ext_dev is BR 4.8%, Si 1.6%, GD 1.6%.
+  - An independent code review found the covariate slicing, the mimic fit and the evaluation masks causal and identical across configs.
+- **Stability:** FM t over uni by year is 2021 2.34, 2022 2.63, 2023 1.73, 2024 1.93, and 3.46 excluding Feb–Apr 2022.
+- **Cost / lag sweep:** the long-short spanning t at 0 / 5 / 10 / 20 bps is 1.71 / 0.82 / −0.07 / −1.82 at lag 1, and 1.52 / 0.67 / −0.18 / −1.85 at lag 0. It is **never above 2, even at zero cost.**
+
+### Vol track: Chronos on realized variance
+- **RV target (`rvtarget`).** Chronos run on the log realized-variance series, with the E[exp] quantile integral for the level. Raw QLIKE:
+
+  | Model | QLIKE |
+  |---|---|
+  | chronos_rv_xl | **0.501** |
+  | chronos_rv_uni | 0.504 |
+  | HAR-RV | 0.648 |
+  | GARCH | 0.729 |
+  | HAR-daily | 0.765 |
+  | Chronos return-based xl | 0.810 |
+  | EWMA | 0.853 |
+
+  chronos_rv_xl beats EWMA, GARCH, HAR-daily and HAR-RV with DM t −3.6 / −2.6 / −2.6 / −5.1, and the result holds after calibration.
+- **Economic value (`rvecon`).** The four Track B uses (low-vol factor, inverse-vol equal weight, vol-target overlays on equal weight and on momentum) were sized with each model's forecast. Chronos-RV beats EWMA in none of them (bootstrap p 0.33–0.98).
+- **Attribution (`volattr`): log-HAR matches Chronos-RV.**
+  - **Pooled + market log-HAR** has QLIKE 0.455, against 0.502 for Chronos-RV xl (DM t +0.78, not significant).
+  - **Per-name log-HAR** has QLIKE 0.486 (DM t +1.35).
+  - **Mechanism:** Chronos's edge over EWMA and GARCH comes from working in log space and pooling across names, and classical models can do both.
+  - **By regime:** Chronos is better in calm years (2021 DM t −1.71, 2023 −1.60) and worse in the 2022 shock (+1.67).
+- **Encompassing test,** pre-registered in [`prereg_vol_encompassing.md`](prereg_vol_encompassing.md) (commit `00dfa0a`); code in [`vol_encompassing.py`](vol_encompassing.py).
+  - **E1 passes:** regressing log 5-day RV on log Chronos-RV and log log-HAR(pooled+mkt) with Driscoll-Kraay errors gives b_Chronos 0.56 (t 4.33) against b_logHAR 0.30 (t 1.97). By year, Chronos's t is 7.2 / 2.5 / 8.0 / 5.6.
+  - **E2 fails:** the equal-weight geometric combination has QLIKE 0.467 against log-HAR's 0.455 (DM t +0.43).
+  - **Pre-registered verdict:** "statistically distinct but practically negligible". No holdout.
+- **Calibration upper bound** (a diagnostic with hindsight in-sample fits, not a trial; [`diagnostics/vol_calib_bound.py`](diagnostics/vol_calib_bound.py)).
+  - **QLIKE-optimal fits:** log-HAR alone 0.4362; Chronos alone 0.4607; the combination 0.4354, with weight 0.16 on Chronos and DM t −0.13 vs log-HAR.
+  - **By year, combination vs log-HAR:** 2021 DM t −5.2, 2022 +0.4, 2023 −3.6, 2024 −5.9. There is a gain of about 2% in calm years, and the 2022 shock dominates the pooled mean.
+  - **Calibrating log-HAR itself** gains about 4%, which is more than Chronos adds.
+
+### Trials and multiplicity
+The ledger holds **238 rows**: Track A 140 (dev 8, test 4, ext_dev 128) and Track B 98 (dev 8, test 8, ext_dev 82).
+- The Track A winner's specific-part t of 2.47 is the best of 20 configurations. A Bonferroni bound over 20 would need |t| ≈ 3.0.
+- The diagnostics and the calibration upper bound add no trials.
+
+## Final verdict (2026-09-24): experiment CLOSED
+
+- **Return alpha: not tradable.**
+  - Chronos-2 quantile forecasts rank MOEX stocks with a real IC (0.07–0.08, t 6–7).
+  - Most of it is a mixture of known factors that a linear mimic reproduces, and the mimic trades better.
+  - The best configuration (`cov_fut`) keeps a Chronos-specific component (FM t 2.47, an upper bound given the linear mimic, and fragile after 20 configurations). That component has negative net Sharpe (−0.38) and no spanning alpha (t −0.43).
+  - No variant tried (covariates, cross-learning, context, targets, quantile shapes, combination, turnover control) yields net alpha beyond the classic books, even at zero cost.
+- **Vol forecasting: a good off-the-shelf model, matched by log-HAR.**
+  - Chronos on log realized variance beats EWMA, GARCH and HAR, and carries information that log-HAR lacks, mostly in calm regimes.
+  - But a well-specified log-HAR matches it on QLIKE, and no portfolio use shows an economic gain.
+- **Holdout (2025-01 → 2026-09): never opened.** Per the user's decision, return alpha gets no holdout, and the window is reserved for the follow-up risk study (VaR/ES, vol targeting, minimum-variance portfolio and hedging; calibration, mixtures, multivariate targets and LoRA fine-tuning), planned in `tmp/plans/risk_experiment.md`.
