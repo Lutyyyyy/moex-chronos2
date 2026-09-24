@@ -185,6 +185,9 @@ def claims(use: str, L: dict, delta, S) -> dict:
     for reg, v in (("calm", 0), ("stress", 1)):
         d = (L[c] - L[b])[s.eq(v)]
         out[f"diff_vs_B_{reg}"] = al.nw_tstat(d, NW)
+    if use == "U1":                                     # claim R (pre-registered): C beats B on calm days
+        cm = out["diff_vs_B_calm"]
+        out["R_p"] = one_sided(cm["mean"] / cm["se"])
     return out
 
 
@@ -201,7 +204,8 @@ def claims_u2(vt: dict) -> dict:
 
 
 def holm(res: dict, alpha: float = 0.05) -> dict:
-    """Holm across uses: family A on the L1 p-values, then L2 among the uses that pass L1; family B (NI)."""
+    """Holm across uses: family A on the L1 p-values plus claim R (U1 calm days), then L2 among the uses that
+    pass L1; family B (NI)."""
     def step(pv: dict) -> dict:
         order = sorted(pv, key=pv.get)
         passed, ok = {}, True
@@ -209,8 +213,11 @@ def holm(res: dict, alpha: float = 0.05) -> dict:
             ok = ok and pv[u] <= alpha / (len(order) - i)
             passed[u] = bool(ok)
         return passed
-    l1 = step({u: r["L1_p"] for u, r in res.items() if u.startswith("U")})
-    l2p = {u: (res[u]["L2_p"] if u == "U2" else res[u]["L2_vs_B"]["p"]) for u, ok in l1.items() if ok}
+    fam_a = {u: r["L1_p"] for u, r in res.items() if u.startswith("U")}
+    if "R_p" in res.get("U1", {}):
+        fam_a["U1_calm_R"] = res["U1"]["R_p"]
+    l1 = step(fam_a)
+    l2p = {u: (res[u]["L2_p"] if u == "U2" else res[u]["L2_vs_B"]["p"]) for u, ok in l1.items() if ok and u in res}
     ni = step({u: r["NI"]["p"] for u, r in res.items() if u.startswith("U") and "NI" in r})
     return {"L1": l1, "L2": step(l2p) if l2p else {}, "NI": ni}
 
@@ -257,7 +264,7 @@ def main(mode: str):
     res = evaluate(period)
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "results.json").write_text(json.dumps(res, indent=1, default=float))
-    print(json.dumps({u: {k: v for k, v in r.items() if k in ("mean_loss", "L1_p", "L2_vs_B", "NI", "L2_p", "fee_vs_ewma")}
+    print(json.dumps({u: {k: v for k, v in r.items() if k in ("mean_loss", "L1_p", "L2_vs_B", "NI", "L2_p", "fee_vs_ewma", "R_p", "diff_vs_B_calm")}
                       for u, r in res.items() if u.startswith("U")}, indent=1, default=float))
     print("holm:", res["holm"])
 
