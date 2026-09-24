@@ -198,7 +198,9 @@ def giacomini_white(loss_a: pd.Series, loss_b: pd.Series, instruments: pd.DataFr
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def _realized_window(dates: pd.DatetimeIndex, i: int, horizon: int, window: int) -> slice:
-    """Positions of forecast dates s with s <= t-h in the trailing window (t = dates[i])."""
+    """Positions of forecast dates s with s <= t-h in the trailing window (t = dates[i]). `horizon` and
+    `window` count ROWS: the index must be the trading calendar (one row per trading day), so h rows =
+    h trading days. Do not pass an irregular or calendar-day index."""
     hi = i - horizon + 1
     return slice(max(0, hi - window), max(0, hi))
 
@@ -265,7 +267,7 @@ def fit_vol_mix(logF: np.ndarray, y: np.ndarray, scale: bool = True) -> np.ndarr
     def obj(p):
         w = _simplex(p[:K]); c = p[K] if scale else 0.0
         x = y / np.exp(c + logF @ w)
-        return np.mean(x - np.log(x) - 1)
+        return np.nanmean(x - np.log(x) - 1)
     p0 = np.zeros(K + 1)
     r = optimize.minimize(obj, p0, method="Nelder-Mead", options=dict(maxiter=4000, xatol=1e-6, fatol=1e-10))
     return np.r_[_simplex(r.x[:K]), r.x[K] if scale else 0.0]
@@ -301,8 +303,8 @@ def rolling_mixture(kind: str, comps: dict, y: pd.DataFrame, mask: pd.DataFrame,
         Es = np.stack([comps[k][1].reindex_like(y).to_numpy() for k in names], axis=-1)
         ok &= pd.DataFrame(np.isfinite(Vs).all(-1) & np.isfinite(Es).all(-1) & (Es < 0).all(-1), y.index, y.columns)
     okv, yv = ok.to_numpy(), y.to_numpy()
-    st = (state.reindex(dates).to_numpy() if state is not None else np.zeros(len(dates)))
-    states = [0.0, 1.0] if state is not None else [0.0]
+    st = (state.reindex(dates).to_numpy(dtype=float) if state is not None else np.zeros(len(dates)))
+    states = [0, 1] if state is not None else [0]
     W = {s: None for s in states}
     rows = []
     out_a = np.full(y.shape, np.nan)
@@ -320,7 +322,7 @@ def rolling_mixture(kind: str, comps: dict, y: pd.DataFrame, mask: pd.DataFrame,
                     W[s] = fit_vares_mix(Vs[sl][sel], Es[sl][sel], yv[sl][sel], alpha)
                 rows.append(dict(date=dates[i], state=s, **{k: W[s][j] for j, k in enumerate(names)}, scale=W[s][-1]))
         s_i = st[i] if state is not None else 0.0
-        w = W.get(s_i) if np.isfinite(s_i) else None
+        w = W.get(int(s_i)) if np.isfinite(s_i) else None
         if w is None:
             continue
         K = len(names)
@@ -384,7 +386,8 @@ def fko_performance_fee(ra: pd.Series, rb: pd.Series, gamma: float, periods_per_
 def fko_fee_bootstrap(ra: pd.Series, rb: pd.Series, gamma: float, periods_per_year: float, n_boot: int = 2000,
                       block: int = 10, seed: int = 0) -> dict:
     """Stationary block bootstrap of the FKO fee. p_one_sided is null-centered (H0: Δ = 0), as in
-    alpha_lib.sharpe_diff_bootstrap: P*(Δ* − mean Δ* >= Δ_obs) (small => a better)."""
+    alpha_lib.sharpe_diff_bootstrap: P*(Δ* − mean Δ* >= Δ_obs) (small => a better). This measures
+    Δ_obs against the bootstrap dispersion under a shift-to-zero null, not an exact pivot test."""
     from arch.bootstrap import StationaryBootstrap
     df = pd.concat([ra.rename("a"), rb.rename("b")], axis=1).dropna()
     obs = fko_performance_fee(df["a"], df["b"], gamma, periods_per_year)
