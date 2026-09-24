@@ -889,6 +889,31 @@ def eval_signal(name, sig, X, classic_pnl, fwd=None, n_tranches=None, period="ex
     return row, bt["net"], ic
 
 
+def covariate_context_features(D, M, mask) -> dict:
+    """Mimic inputs matching what covariate / market-series / cross-learning configs can see:
+    trailing IMOEX beta, traded-value dynamics, own-sector index trend, futures trends, and
+    cross-sectional (sector-average) trailing returns. All known at close d."""
+    ret = D["ret"]
+    betas = al.trailing_betas(ret, D["bench"]["imoex_ret"], window=250, min_periods=120)
+    dlv = np.log(D["value"].replace(0, np.nan)).diff().reindex_like(ret)
+    sec_idx = pd.DataFrame({t: M[SECTOR_INDEX[SECTOR_OF[t]]] if SECTOR_OF.get(t) in SECTOR_INDEX else M["IMOEX"]
+                            for t in ret.columns}).reindex(ret.index)
+    f = {"beta250": betas, "dlv20": dlv.rolling(20, min_periods=10).mean(), "dlv60s": dlv.rolling(60, min_periods=30).std(),
+         "sec20": sec_idx.rolling(20, min_periods=10).sum(), "sec60": sec_idx.rolling(60, min_periods=30).sum()}
+    for k in ["BR", "Si", "GD", "IMOEX"]:       # per-name exposure x trend (a constant-across-names
+        mk = M[k].reindex(ret.index)            # feature carries no cross-sectional information)
+        beta_k = ret.apply(lambda c: c.rolling(250, min_periods=120).cov(mk)).div(mk.rolling(250, min_periods=120).var(), axis=0)
+        f[f"{k}_expo_trend20"] = beta_k.mul(mk.rolling(20, min_periods=10).sum(), axis=0)
+    m20 = ret.rolling(20, min_periods=10).mean().where(mask)
+    secmean = pd.DataFrame(index=ret.index, columns=ret.columns, dtype=float)
+    for sec in set(SECTOR_OF.values()):
+        cols = [t for t in ret.columns if SECTOR_OF.get(t) == sec]
+        if cols:
+            secmean[cols] = np.repeat(m20[cols].mean(axis=1).to_numpy()[:, None], len(cols), 1)
+    f["secmean20"] = secmean
+    return f
+
+
 def stage_improve(config="uni"):
     out = IMP_DIR / config; out.mkdir(parents=True, exist_ok=True)
     D = load_data()
@@ -915,6 +940,16 @@ def stage_improve(config="uni"):
     add("mimic", fit, tag="S3mimic")
     add("chronos_minus_mimic", al.xs_standardize(chron, X["mask"]) - fit, tag="S3mimic")
     print(f"  mimic out-of-sample R^2 of the Chronos signal (mean per-date corr^2): {mimic_r2:.3f}")
+    if config != "uni":   # fair mimic: also give it the covariate / cross-sectional information the config sees
+        M = market_series(D)
+        feats_ext = {**al.context_features(D["ret"]), **covariate_context_features(D, M, X["mask"])}
+        fit_x, oos_x = al.rolling_xs_fit(chron, feats_ext, X["mask"])
+        mimic_r2_ext = float((oos_x.loc["2021":"2024"] ** 2).mean())
+        add("mimic_ext", fit_x, tag="S3mimic")
+        add("chronos_minus_mimic_ext", al.xs_standardize(chron, X["mask"]) - fit_x, tag="S3mimic")
+        print(f"  extended mimic out-of-sample R^2: {mimic_r2_ext:.3f}")
+    else:
+        mimic_r2_ext = None
     print(f"[{config}] B) combination (weights = trailing realized Fama-MacBeth slopes)")
     fwd = X[f"fwd{LAG}"]
     csig = {k: C[k] for k in BT_CFG["classic"]}
@@ -934,7 +969,7 @@ def stage_improve(config="uni"):
     boot = al.sharpe_diff_bootstrap(pnl["combo_plus_chronos"], pnl["combo_classic"])
     sp = al.ols_nw(pnl["combo_plus_chronos"], pd.DataFrame({"combo_classic": pnl["combo_classic"],
                    **{k: classic_pnl[(k, 5)] for k in BT_CFG["classic"]}}).reindex(pnl["combo_plus_chronos"].index), lags=10)
-    extra = dict(mimic_oos_r2=mimic_r2,
+    extra = dict(mimic_oos_r2=mimic_r2, mimic_ext_oos_r2=mimic_r2_ext,
                  combo_chronos_vs_classic=dict(sharpe_diff=boot["diff"], boot_p=boot["p_one_sided"],
                                                ic_diff_t=al.nw_tstat((ics["combo_plus_chronos"] - ics["combo_classic"]).dropna(), NW)["t"],
                                                alpha_over_classic_combo_t=float(sp.loc["const", "t"]),
@@ -1220,6 +1255,84 @@ def stage_qshape(config="uni"):
     return T, VT
 
 
+# %% [markdown]
+# ## Stage `volattr` (vol-track attribution): WHY does Chronos-RV forecast better?
+# Classical models given each candidate advantage: log space (per-name log-HAR), cross-sectional
+# pooling (pooled log-HAR), common market-vol factor (pooled log-HAR + market terms). Plus where the
+# edge lives: by year, ex-2022 shock, liquidity halves, calm vs post-shock periods; and Chronos
+# univariate vs cross-learning head-to-head.
+
+# %%
+def stage_volattr():
+    D = load_data()
+    base = build_inputs(load_preds(), D)
+    mask = base["mask"]
+    V = vol_inputs(base, DEV_DIR)[0]
+    steps = STEPS[0]; hmax = max(steps)
+    rv_fwd = sum(D["rv"].shift(-h) for h in steps)
+    cache = IMP_DIR / "rvtarget" / "loghar_cache.parquet"
+    if cache.exists():
+        H = pd.read_parquet(cache); logs = {k: H.xs(k, axis=1, level=0) for k in H.columns.levels[0]}
+    else:
+        logs = {"loghar": al.vol_har_log(D["rv"], steps, mask),
+                "loghar_pooled": al.vol_har_log(D["rv"], steps, mask, pooled=True),
+                "loghar_pooled_mkt": al.vol_har_log(D["rv"], steps, mask, pooled=True, market=True)}
+        cache.parent.mkdir(parents=True, exist_ok=True); pd.concat(logs, axis=1).to_parquet(cache)
+    models = {"ewma": V["ewma"], "garch": V["garch"], "har_rv": V["har_rv_ceiling"], **logs}
+    for nm in ["uni", "xl"]:
+        models[f"chronos_rv_{nm}"] = rv_var_forecast(pd.read_parquet(rv_forecast_path(nm)), D["ret"].index, D["ret"].columns)
+    d = ic_dates(base, "ext_dev", steps)
+    m = mask.loc[d].copy()
+    for v in models.values():
+        m &= v.loc[d].notna()
+    cal = {k: v.mul(al.rolling_vol_scale(v, rv_fwd, mask, horizon=hmax), axis=0) for k, v in models.items()}
+    def losses(mm, which):
+        src = models if which == "raw" else cal
+        return {k: al.vol_loss_panel(rv_fwd.loc[d], v.loc[d], mm) for k, v in src.items()}
+    L, Lc = losses(m, "raw"), losses(m, "cal")
+    rows = []
+    for k in models:
+        mz = al.mincer_zarnowitz(rv_fwd.loc[d], models[k].loc[d], m)
+        r = dict(model=k, qlike_raw=float(L[k].mean()), qlike_cal=float(Lc[k].mean()), mz_r2_log=mz["r2_log"])
+        if k != "chronos_rv_xl":
+            r["dm_raw_xl_vs_this"] = al.dm_test(L["chronos_rv_xl"], L[k], NW)["t"]
+            r["dm_cal_xl_vs_this"] = al.dm_test(Lc["chronos_rv_xl"], Lc[k], NW)["t"]
+        rows.append(r)
+    T = pd.DataFrame(rows).set_index("model")
+    best_classic = T.drop(index=["chronos_rv_uni", "chronos_rv_xl"])["qlike_raw"].idxmin()
+    # splits: where does chronos_rv_xl beat the best classical model?
+    liq = D["value"].rolling(60, min_periods=30).median().loc[d]
+    top = liq.ge(liq.where(m).median(axis=1), axis=0)
+    mkt_rv = np.log(D["rv"].where(mask)).mean(axis=1)
+    shock_day = mkt_rv > np.log(np.exp(mkt_rv).rolling(250, min_periods=60).median().shift(1) * 2)
+    post_shock = shock_day.rolling(20, min_periods=1).max().shift(0).fillna(0).astype(bool).reindex(d)
+    splits = {}
+    for y in sorted(set(d.year)):
+        splits[f"year_{y}"] = (m, d[d.year == y])
+    ex = d[(d < "2022-02-01") | (d > "2022-04-30")]
+    splits["ex_2022_shock"] = (m, ex)
+    splits["liquid_half"] = (m & top, d); splits["illiquid_half"] = (m & ~top, d)
+    splits["post_shock_20d"] = (m, d[post_shock.to_numpy()]); splits["calm"] = (m, d[~post_shock.to_numpy()])
+    srows = []
+    for nm, (mm, dd) in splits.items():
+        Ls = {k: al.vol_loss_panel(rv_fwd.loc[dd], models[k].loc[dd], mm.loc[dd]) for k in ["chronos_rv_xl", "chronos_rv_uni", best_classic, "loghar", "loghar_pooled_mkt"]}
+        srows.append(dict(split=nm, n_dates=len(dd),
+                          dm_xl_vs_best_classic=al.dm_test(Ls["chronos_rv_xl"], Ls[best_classic], NW)["t"],
+                          dm_xl_vs_loghar=al.dm_test(Ls["chronos_rv_xl"], Ls["loghar"], NW)["t"],
+                          dm_xl_vs_loghar_pooled_mkt=al.dm_test(Ls["chronos_rv_xl"], Ls["loghar_pooled_mkt"], NW)["t"],
+                          dm_xl_vs_uni=al.dm_test(Ls["chronos_rv_xl"], Ls["chronos_rv_uni"], NW)["t"],
+                          qlike_gap_vs_best_classic=float(Ls["chronos_rv_xl"].mean() - Ls[best_classic].mean())))
+    S = pd.DataFrame(srows).set_index("split")
+    for k in logs:
+        al.append_trial(LEDGER, track="B", tag="S3volattr", period="ext_dev", signal=f"baseline_{k}", book="vol_forecast",
+                        exec_lag=0, cost_bps=np.nan, borrow=np.nan, net_sharpe=np.nan, daily_sr=np.nan)
+    out = IMP_DIR / "rvtarget"
+    T.to_csv(out / "volattr_models.csv"); S.to_csv(out / "volattr_splits.csv")
+    pd.set_option("display.width", 250)
+    print(T.round(3).to_string()); print(f"best classical model (raw QLIKE): {best_classic}"); print(S.round(3).to_string())
+    return T, S
+
+
 # %%
 if __name__ == "__main__" and len(sys.argv) > 1:
     stage = sys.argv[1]
@@ -1238,6 +1351,8 @@ if __name__ == "__main__" and len(sys.argv) > 1:
             stage_dev(tag=sys.argv[sys.argv.index("--tag") + 1] + "_dev" if "--tag" in sys.argv else "v1_dev")
     elif stage == "variants":
         stage_variants()
+    elif stage == "volattr":
+        stage_volattr()
     elif stage == "qshape":
         stage_qshape(sys.argv[2] if len(sys.argv) > 2 else "uni")
     elif stage == "rvecon":

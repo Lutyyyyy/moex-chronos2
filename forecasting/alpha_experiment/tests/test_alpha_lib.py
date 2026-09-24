@@ -479,3 +479,31 @@ def test_quantile_shape_features_normal_and_skewed():
     assert n["PUP"] == pytest.approx(0.5, abs=1e-6)
     assert n["VAR_IQR80"] == pytest.approx(2 * 0.01 ** 2, rel=1e-3) and n["VAR_IQR50"] == pytest.approx(2 * 0.01 ** 2, rel=1e-3)
     assert sk["SKEW"] > 0.2 and sk["UPDOWN"] > 0 and sk["TAIL"] > n["TAIL"]
+
+
+def test_vol_har_log_fits_logar_and_is_causal():
+    rng = np.random.default_rng(31)
+    idx = pd.bdate_range("2021-01-04", periods=500); cols = [f"T{i}" for i in range(6)]
+    lv = np.zeros((500, 6)); lv[0] = -8
+    for i in range(1, 500):                                                  # persistent log-variance process
+        lv[i] = -8 + 0.9 * (lv[i - 1] + 8) + 0.3 * rng.standard_normal(6)
+    rv = pd.DataFrame(np.exp(lv), idx, cols)
+    mask = pd.DataFrame(True, idx, cols)
+    for pooled, market in [(False, False), (True, False), (True, True)]:
+        f = al.vol_har_log(rv, range(1, 6), mask, pooled=pooled, market=market, min_train=150)
+        rv5 = sum(rv.shift(-h) for h in range(1, 6))
+        ok = f.notna() & rv5.notna()
+        pair = pd.concat([np.log(f.where(ok)).stack(), np.log(rv5.where(ok)).stack()], axis=1).dropna()
+        c = np.corrcoef(pair.iloc[:, 0], pair.iloc[:, 1])[0, 1]
+        assert c > 0.6, (pooled, market, c)
+    rv2 = rv.copy(); rv2.iloc[400:] *= 100                                   # future only
+    a = al.vol_har_log(rv, range(1, 6), mask, pooled=True, market=True, min_train=150)
+    b = al.vol_har_log(rv2, range(1, 6), mask, pooled=True, market=True, min_train=150)
+    assert np.allclose(a.iloc[:400].fillna(0), b.iloc[:400].fillna(0))
+
+
+def test_xs_standardize_constant_row_is_zero_not_nan():
+    idx = pd.bdate_range("2022-01-03", periods=2); cols = list("ABCD")
+    sig = pd.DataFrame([[1.0, 1.0, 1.0, 1.0], [1.0, 2.0, 3.0, np.nan]], idx, cols)
+    z = al.xs_standardize(sig, pd.DataFrame(True, idx, cols))
+    assert (z.iloc[0] == 0).all() and np.isnan(z.iloc[1, 3]) and z.iloc[1, :3].std() == pytest.approx(1.0)

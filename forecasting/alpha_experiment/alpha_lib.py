@@ -796,10 +796,16 @@ def deflated_sharpe(sr_period: float, n_obs: int, n_trials: int, sr_trials_var: 
 
 
 def xs_standardize(sig: pd.DataFrame, eligible: pd.DataFrame) -> pd.DataFrame:
-    """Cross-sectional rank -> centered on 0, unit variance per date (robust to outliers)."""
+    """Cross-sectional rank -> centered on 0, unit variance per date (robust to outliers).
+    A date on which the signal is constant across names carries no cross-sectional information
+    and is set to 0 (not 0/0 = NaN)."""
     r = _xs_rank(sig, eligible)
     r = r.sub(r.mean(axis=1), axis=0)
-    return r.div(r.std(axis=1), axis=0)
+    sd = r.std(axis=1)
+    z = r.div(sd.where(sd > 0), axis=0)
+    const = (sd == 0).to_numpy()
+    z.loc[const] = r.loc[const]            # centered ranks of a constant row are already 0 (NaN kept)
+    return z
 
 
 def fama_macbeth(fwd: pd.DataFrame, signals: dict[str, pd.DataFrame], eligible: pd.DataFrame,
@@ -1088,3 +1094,57 @@ def quantile_shape_features(preds: pd.DataFrame, steps: Sequence[int], quantiles
     out = g[["SKEW", "UPDOWN", "TAIL", "DOWN", "PUP"]].mean()
     out["VAR_IQR80"] = g["V80"].sum(); out["VAR_IQR50"] = g["V50"].sum()
     return out
+
+
+def vol_har_log(rv: pd.DataFrame, steps: Sequence[int], mask: pd.DataFrame | None = None, pooled: bool = False,
+                market: bool = False, refit_every: int = 21, min_train: int = 250, eps: float = 1e-7) -> pd.DataFrame:
+    """HAR on LOG realized variance (the standard strong RV benchmark):
+    log Σ_{h in steps} RV_{d+h} ~ 1 + log RV_d + log mean RV_{d-4..d} + log mean RV_{d-21..d}
+    [+ the same three terms for the market's cross-sectional mean log RV if `market`].
+    Forecast = exp(fit + ½·σ²_resid) (log-normal smearing). Causal: coefficients used at d are fit
+    on rows whose forward window has realized (row date <= d - max(steps)), refit every
+    `refit_every` rows. `pooled`: one regression across all names (restricted to `mask`) instead of
+    one per name — the classical analogue of Chronos cross-learning."""
+    lrv = np.log(rv.clip(lower=0) + eps)
+    feats = {"d": lrv, "w": np.log(rv.rolling(5, min_periods=5).mean() + eps),
+             "m": np.log(rv.rolling(22, min_periods=22).mean() + eps)}
+    if market:
+        mk = (lrv.where(mask) if mask is not None else lrv).mean(axis=1)
+        for k, v in {"md": mk, "mw": mk.rolling(5, min_periods=5).mean(), "mm": mk.rolling(22, min_periods=22).mean()}.items():
+            feats[k] = pd.DataFrame(np.repeat(v.to_numpy()[:, None], rv.shape[1], 1), rv.index, rv.columns)
+    y = np.log(sum(rv.shift(-h) for h in steps) + eps)
+    names = list(feats)
+    F = np.stack([feats[k].to_numpy() for k in names], axis=-1)          # (T, N, K)
+    Y = y.to_numpy()
+    M = mask.reindex_like(rv).fillna(False).to_numpy() if mask is not None else np.ones(rv.shape, bool)
+    T, N, K = F.shape
+    hmax = max(steps)
+    out = np.full((T, N), np.nan)
+    def fit(rows_x, rows_y):
+        ok = np.isfinite(rows_y) & np.isfinite(rows_x).all(axis=1)
+        if ok.sum() < min_train:
+            return None
+        A = np.column_stack([np.ones(ok.sum()), rows_x[ok]])
+        b = np.linalg.lstsq(A, rows_y[ok], rcond=None)[0]
+        res = rows_y[ok] - A @ b
+        return b, float(res.var())
+    cols = [slice(None)] if pooled else [slice(j, j + 1) for j in range(N)]
+    for c in cols:
+        par = None
+        for i in range(T):
+            if par is None or i % refit_every == 0:
+                end = i - hmax
+                if end >= 0:
+                    xs = F[:end + 1, c].reshape(-1, K); ys = Y[:end + 1, c].reshape(-1)
+                    ms = M[:end + 1, c].reshape(-1)
+                    got = fit(xs[ms], ys[ms]) if pooled else fit(xs, ys)
+                    par = got or par
+            if par is None:
+                continue
+            b, s2 = par
+            x = F[i, c]
+            ok = np.isfinite(x).all(axis=1)
+            v = np.full(x.shape[0], np.nan)
+            v[ok] = np.exp(b[0] + x[ok] @ b[1:] + 0.5 * s2)
+            out[i, c] = v
+    return pd.DataFrame(out, index=rv.index, columns=rv.columns)
