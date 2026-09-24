@@ -1,0 +1,21 @@
+{
+ "mimic_oos_r2": 0.3933221701755048,
+ "mimic_ext_oos_r2": 0.41874947477744434,
+ "combo_chronos_vs_classic": {
+  "sharpe_diff": -0.28082330799482214,
+  "boot_p": 0.972,
+  "ic_diff_t": -1.2159657112917701,
+  "alpha_over_classic_combo_t": -1.6851038028171192,
+  "mean_weight_chronos": 0.0006705553768542589
+ },
+ "vol_calibration": {
+  "qlike_raw": 0.8079698514996816,
+  "qlike_calibrated": 0.628109757969002,
+  "dm_t_calibrated_vs_raw": -2.195022707263619,
+  "dm_t_vs_ewma_both_calibrated": -0.9535327922370783,
+  "dm_t_vs_garch_both_calibrated": -0.7393666668078572,
+  "dm_t_vs_har_daily_both_calibrated": -1.7054453343613447,
+  "q0.05_hit_calibrated": 0.043115915829054885,
+  "q0.1_hit_calibrated": 0.08592450647190686
+ }
+}

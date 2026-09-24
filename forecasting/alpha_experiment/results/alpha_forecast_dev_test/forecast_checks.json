@@ -1,0 +1,9 @@
+{
+  "rows": 353772,
+  "expected_rows": 353772,
+  "anchors": 999,
+  "max_anchor": "2024-12-30",
+  "seconds": 211.5,
+  "rows_with_quantile_crossing": 1,
+  "any_nan": false
+}

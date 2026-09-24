@@ -1,0 +1,63 @@
+{
+  "calendar": [
+    "2020-01-03",
+    "2024-12-30",
+    1249
+  ],
+  "days_2022_closure_gap": "[datetime.date(2022, 2, 21), datetime.date(2022, 2, 22), datetime.date(2022, 2, 24)]",
+  "frac_1d_close_equals_main_close_post2021": 0.1251,
+  "holiday_like_zero_return_days": 0,
+  "top_abs_daily_returns": [
+    [
+      "2022-02-24",
+      "MTLRP",
+      0.683
+    ],
+    [
+      "2022-02-24",
+      "IRAO",
+      0.669
+    ],
+    [
+      "2022-02-24",
+      "SBERP",
+      0.643
+    ],
+    [
+      "2022-02-24",
+      "MTLR",
+      0.633
+    ],
+    [
+      "2022-02-24",
+      "SBER",
+      0.629
+    ],
+    [
+      "2022-02-24",
+      "VKCO",
+      0.621
+    ],
+    [
+      "2022-02-24",
+      "T",
+      0.621
+    ],
+    [
+      "2022-02-24",
+      "BANEP",
+      0.615
+    ]
+  ],
+  "rv_to_sq_ret_ratio": 1.389,
+  "eligible_names": {
+    "first_date": "2021-01-04",
+    "min_after_2021": 32,
+    "median_2021": 52,
+    "median_2023": 64,
+    "median_2024": 65,
+    "ever": 70
+  },
+  "mcftr_missing_on_calendar": 1,
+  "rf_last": 0.0007567161637684894
+}

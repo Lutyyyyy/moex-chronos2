@@ -1,0 +1,45 @@
+{
+  "primary_a": "MED_SIG",
+  "primary_b": "lowvol_factor",
+  "A1": {
+    "stat": "IC NW t",
+    "value": 3.212892888732291,
+    "threshold": 2.0,
+    "pass_": true
+  },
+  "A2": {
+    "stat": "net spanning alpha t",
+    "value": -0.9690210793846934,
+    "alpha_ann": -0.033772278521259,
+    "threshold": 2.0,
+    "pass_": false
+  },
+  "A3": {
+    "stat": "Fama-MacBeth chronos t",
+    "value": 2.182353417795566,
+    "threshold": 2.0,
+    "pass_": true
+  },
+  "B1": {
+    "stat": "DM p (chronos better), raw & scaled QLIKE, vs EWMA and GARCH",
+    "raw": {
+      "ewma": 0.7302579141358849,
+      "garch": 0.9818753074495142
+    },
+    "scaled": {
+      "ewma": 0.9975638963755987,
+      "garch": 0.24531469845378634
+    },
+    "threshold": 0.05,
+    "pass_": false
+  },
+  "B2": {
+    "stat": "bootstrap p Sharpe(lowvol_factor|chronos) > Sharpe(|ewma)",
+    "value": 0.8145,
+    "sharpe_diff": -0.48338534384896326,
+    "threshold": 0.05,
+    "pass_": false
+  },
+  "TRACK_A_PASS": false,
+  "TRACK_B_PASS": false
+}

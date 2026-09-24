@@ -1,0 +1,9 @@
+,0
+qlike_combo,0.4672075044616858
+qlike_loghar_pooled_mkt,0.4552809162161438
+qlike_chronos_rv_xl,0.5024931724121476
+dm_t_combo_vs_loghar_pooled_mkt,0.42755195137915103
+dm_t_combo_vs_chronos_rv_xl,-1.0748047809168604
+e1_pass,True
+e2_pass,False
+verdict,"E1 pass, E2 fail: statistically distinct but practically negligible; no holdout"

@@ -7,7 +7,7 @@ net alpha on MOEX equities beyond classic strategies? There are two tracks:
 
 This is a different question from the per-ticker directional-accuracy null in [FINDINGS.md](../../FINDINGS.md). Ranking ~60 names only needs relative skill, and a vol forecast needs no return skill at all.
 
-Plan: [`tmp/plans/alpha_experiment.md`](../../tmp/plans/alpha_experiment.md). Code: [`alpha_lib.py`](alpha_lib.py) (pure functions, tested in [`tests/`](tests/)) and [`alpha_run.py`](alpha_run.py) (stages `data → forecast → dev → test → holdout`).
+Plan: `tmp/plans/alpha_experiment.md` (kept locally, not in the repo). Code: [`alpha_lib.py`](alpha_lib.py) (pure functions, tested in [`tests/`](tests/)) and [`alpha_run.py`](alpha_run.py) (stages `data → forecast → dev → test → holdout`).
 
 ## Status
 
@@ -281,6 +281,17 @@ The ledger holds **238 rows**: Track A 140 (dev 8, test 4, ext_dev 128) and Trac
 - The Track A winner's specific-part t of 2.47 is the best of 20 configurations. A Bonferroni bound over 20 would need |t| ≈ 3.0.
 - The diagnostics and the calibration upper bound add no trials.
 
+### Result files
+The summary tables behind every number above are copied from `forecasting/runs/` (gitignored) into [`results/`](results/), using the same sub-folder names:
+- 2024 gate and dev tables: `alpha_test/`, `alpha_dev/`;
+- the configuration sweep: `alpha_variants/configs_map.csv`, `winners.json`;
+- step 3 and quantile shapes: `alpha_improve/<config>/`;
+- vol track: `alpha_improve/rvtarget/`;
+- the runbook summary: `runbook_logs/05_summary.log`;
+- data and forecast QA JSON.
+
+Forecasts, PnL series and data panels (parquet) are not included. They are reproducible with `alpha_run.py` (stages `data`, `forecast`, `dev`, `test`, `configs`, `select`, `rvtarget`, `volattr`) and `vol_encompassing.py`.
+
 ## Final verdict (2026-09-24): experiment CLOSED
 
 - **Return alpha: not tradable.**
@@ -291,4 +302,4 @@ The ledger holds **238 rows**: Track A 140 (dev 8, test 4, ext_dev 128) and Trac
 - **Vol forecasting: a good off-the-shelf model, matched by log-HAR.**
   - Chronos on log realized variance beats EWMA, GARCH and HAR, and carries information that log-HAR lacks, mostly in calm regimes.
   - But a well-specified log-HAR matches it on QLIKE, and no portfolio use shows an economic gain.
-- **Holdout (2025-01 → 2026-09): never opened.** Per the user's decision, return alpha gets no holdout, and the window is reserved for the follow-up risk study (VaR/ES, vol targeting, minimum-variance portfolio and hedging; calibration, mixtures, multivariate targets and LoRA fine-tuning), planned in `tmp/plans/risk_experiment.md`.
+- **Holdout (2025-01 → 2026-09): never opened.** Per the user's decision, return alpha gets no holdout, and the window is reserved for the follow-up risk study (VaR/ES, vol targeting, minimum-variance portfolio and hedging; calibration, mixtures, multivariate targets and LoRA fine-tuning), planned separately (plan kept locally).
