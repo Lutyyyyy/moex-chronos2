@@ -972,7 +972,7 @@ def stage_dev() -> dict:
 FT_DIR = RUNS / "risk_ft" / "dev"
 F_TWIN = {"F1": "Z3", "F2": "N1"}                                       # zero-shot twin of each fine-tuned source
 F_YEARS = (2022, 2023, 2024)
-F_START, F_END = "2022-01-01", "2024-12-31"
+F_START, F_END = "2022-01-01", "2024-12-31"                             # calendar bounds (inclusive); trading days follow
 FROZEN_C = {"U1": "mixeq_chr_N1ret", "U2": "fac_chr", "U3": "mixeq_chr_N4rv", "U4": "mixeq_chr_Z3_cal"}   # = holdout_run.FROZEN
 
 
@@ -1093,6 +1093,8 @@ def stage_dev_ft(ft_dir: Path | str = FT_DIR, targets=("F1", "F2"), tag: str = "
     the unchanged evaluators; F vs zero-shot twin arm by arm; and the F rule against the frozen C arms."""
     global LEDGER_PERIOD
     ft_dir = Path(ft_dir)
+    for suf in ("", "_own"):                                            # paths are keyed by arm name only: never reuse
+        (OUT / "dev" / "cache" / f"{cache}{suf}.parquet").unlink(missing_ok=True)   # them across F inputs (review note 1)
     D = load_panel(DEV_PANEL, ("ret", "rv", "eligible", "bench"))
     ret, cal, cols = D["ret"], D["ret"].index, D["ret"].columns
     S = pd.read_csv(OUT / "stress.csv", index_col=0, parse_dates=True)["stress"].reindex(cal)
