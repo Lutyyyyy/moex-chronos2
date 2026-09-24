@@ -481,10 +481,13 @@ def gates(k: str) -> bool:
     return not k.startswith(GATE_EXCLUDE)
 
 
+LEDGER_PERIOD = "dev_2021_2024"                                        # stage_dev_ft sets dev_2022_2024 (plan E4/I)
+
+
 def _ledger(use: str, arm: str, metric: str, value: float, n: int, tag: str = "R4_dev"):
     if os.environ.get("RISK_NO_LEDGER") == "1":                        # re-scoring: a correction, not new trials
         return
-    al.append_trial(LEDGER, use=use, tag=tag, period="dev_2021_2024", arm=arm, metric=metric,
+    al.append_trial(LEDGER, use=use, tag=tag, period=LEDGER_PERIOD, arm=arm, metric=metric,
                     value=float(value), n=int(n))
 
 
@@ -495,9 +498,11 @@ def _same_universe(full: pd.DataFrame, old: pd.DataFrame, what: str):
         raise ValueError(f"{what}: new arms would drop {lost} (date, name) cells from the existing universe")
 
 
-def evaluate_u1(arms: dict, D, S, mask1, new: set | None = None, tag: str = "R4_dev", ledger: bool = True) -> pd.DataFrame:
+def evaluate_u1(arms: dict, D, S, mask1, new: set | None = None, tag: str = "R4_dev", ledger: bool = True,
+                losses_out: dict | None = None) -> pd.DataFrame:
     """Every arm is scored on the same cells: those where ALL arms give a valid pair ES < VaR < 0 (the FZ0
-    domain). `ledger=False` re-scores without logging trials (corrections, not new trials)."""
+    domain). `ledger=False` re-scores without logging trials (corrections, not new trials).
+    `losses_out`, if given, receives the per-date loss series keyed (arm, alpha)."""
     y1 = D["ret"].shift(-1)
     rows = {}
     for alpha in (0.05, 0.01):
@@ -514,6 +519,8 @@ def evaluate_u1(arms: dict, D, S, mask1, new: set | None = None, tag: str = "R4_
             _same_universe(M, M_old, f"U1 alpha={alpha}")
         Mk = {k: M if gates(k) else M & arms[k][alpha][0].lt(0) & arms[k][alpha][1].lt(arms[k][alpha][0]) for k in names}
         Ls = {k: rl.fz0_panel(y1, *arms[k][alpha], Mk[k], alpha) for k in names}
+        if losses_out is not None:
+            losses_out.update({(k, alpha): L for k, L in Ls.items()})
         dates = Ls[[k for k in names if gates(k)][0]].index
         s = S.reindex(dates)
         classical = [k for k in names if k.split("_cal")[0] in CLASSICAL_U1]
@@ -547,7 +554,9 @@ def evaluate_u1(arms: dict, D, S, mask1, new: set | None = None, tag: str = "R4_
     return pd.DataFrame(rows).T
 
 
-def evaluate_vol(arms: dict, D, S, mask5, new: set | None = None, tag: str = "R4_dev") -> tuple:
+def evaluate_vol(arms: dict, D, S, mask5, new: set | None = None, tag: str = "R4_dev", cache: str = "portfolio_paths") -> tuple:
+    """U2/U3. Portfolio paths are cached in dev/cache/<cache>.parquet (and <cache>_own.parquet); a run on a
+    different date range (stage_dev_ft) must use its own cache name."""
     ret = D["ret"]
     steps = (1, 2, 3, 4, 5)
     rv5 = sum(D["rv"].shift(-h) for h in steps)
@@ -571,7 +580,7 @@ def evaluate_vol(arms: dict, D, S, mask5, new: set | None = None, tag: str = "R4
     target5 = VT_TARGET_ANNUAL * np.sqrt(5 / 252)
     # GMV is invariant to a date-common scale, so calibrated arms share their raw arm's GMV
     raw_names = [k for k in arms if not k.endswith("_cal")]
-    fp = OUT / "dev" / "cache" / "portfolio_paths.parquet"
+    fp = OUT / "dev" / "cache" / f"{cache}.parquet"
     if fp.exists():
         P = pd.read_parquet(fp)
         paths = {k: {m: P[(k, m)] for m in ("gmv", "vt", "vt_exposure")} for k in P.columns.levels[0]}
@@ -590,7 +599,7 @@ def evaluate_vol(arms: dict, D, S, mask5, new: set | None = None, tag: str = "R4
         pd.concat({k: pd.DataFrame(v) for k, v in paths.items()}, axis=1).to_parquet(fp)
     own_paths = {}
     if own:                                                             # descriptive, on their own dates, vs EWMA/GARCH
-        fo = OUT / "dev" / "cache" / "portfolio_paths_own.parquet"
+        fo = OUT / "dev" / "cache" / f"{cache}_own.parquet"
         if fo.exists():
             Po = pd.read_parquet(fo)
             own_paths = {k: {m: Po[(k, m)] for m in ("gmv", "vt", "vt_exposure")} for k in Po.columns.levels[0]}
@@ -650,7 +659,7 @@ def evaluate_vol(arms: dict, D, S, mask5, new: set | None = None, tag: str = "R4
     return pd.DataFrame(rows).T, paths
 
 
-def evaluate_u4(arms: dict, D, S, mask5, new: set | None = None, tag: str = "R4_dev") -> pd.DataFrame:
+def evaluate_u4(arms: dict, D, S, mask5, new: set | None = None, tag: str = "R4_dev", losses_out: dict | None = None) -> pd.DataFrame:
     """U4 (plan F1-F4): each eligible stock hedged over d+1..d+5 with the IMOEX future (MX),
     h = ρ̂·σ̂_s/σ̂_f with a shared EWMA ρ̂ (λ=0.97) and EWMA σ̂_f (λ=0.94), plus the rolling 250-day
     OLS beta as an extra classical arm. Windows containing an MX roll are dropped (same for all arms).
@@ -679,6 +688,8 @@ def evaluate_u4(arms: dict, D, S, mask5, new: set | None = None, tag: str = "R4_
     Uk = {k: U if gates(k) else U & np.isfinite(h.loc[dates]) for k, h in Hh.items()}
     loss = {k: (ra.hedged_returns(h, R5s, R5f).loc[dates] ** 2).where(Uk[k]).mean(axis=1).dropna() for k, h in Hh.items()}
     unhedged = (R5s.loc[dates] ** 2).where(U).mean(axis=1)
+    if losses_out is not None:
+        losses_out.update(loss)
     s = S.reindex(dates)
     classical = [k for k in Hh if gates(k) and k.split("_cal")[0] in CLASSICAL_VOL + ["ols_beta"]]
     best = min(classical, key=lambda k: loss[k].mean())
@@ -953,9 +964,221 @@ def stage_dev() -> dict:
     return {"U1": t1, "U23": t23}
 
 
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Stage dev_ft: LoRA fine-tuned sources F1/F2 (plan E4 + I)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+FT_DIR = RUNS / "risk_ft" / "dev"
+F_TWIN = {"F1": "Z3", "F2": "N1"}                                       # zero-shot twin of each fine-tuned source
+F_YEARS = (2022, 2023, 2024)
+F_START, F_END = "2022-01-01", "2024-12-31"
+FROZEN_C = {"U1": "mixeq_chr_N1ret", "U2": "fac_chr", "U3": "mixeq_chr_N4rv", "U4": "mixeq_chr_Z3_cal"}   # = holdout_run.FROZEN
+
+
+def ft_records(ft_dir: Path = FT_DIR, targets=("F1", "F2")) -> pd.DataFrame:
+    """One row per (target, year) from the Colab record.json files, with the checks of plan W0.1:
+    all dev folds present, the chosen lr is the argmin of the inner-validation loss, the adapter was saved."""
+    rows = []
+    for t in targets:
+        for y in F_YEARS:
+            f = Path(ft_dir) / t / str(y) / "record.json"
+            if not f.exists():
+                raise FileNotFoundError(f"missing Colab fold {t} {y}: {f}")
+            r = json.loads(f.read_text())
+            runs = {x["lr"]: x for x in r["runs"]}
+            argmin = min(runs, key=lambda lr: runs[lr]["best_eval_loss"])
+            if r["chosen_lr"] != argmin:
+                raise ValueError(f"{t} {y}: chosen lr {r['chosen_lr']} is not the validation argmin {argmin}")
+            row = {"target": t, "year": y, "cutoff": r["cutoff"], "chosen_lr": r["chosen_lr"], "n_train_series": r["n_train_series"],
+                   "n_val_series": r.get("n_val_series"), "n_pred_rows": r["n_pred_rows"], "adapter_saved": r.get("adapter_saved")}
+            for lr, x in runs.items():
+                row[f"val_loss_lr{lr:g}"] = x["best_eval_loss"]
+                row[f"best_step_lr{lr:g}"] = x["best_step"]
+                row[f"first_eval_lr{lr:g}"] = x["eval_log"][0][1] if x["eval_log"] else np.nan
+                row[f"fit_s_lr{lr:g}"] = x["fit_seconds"]
+            rows.append(row)
+    return pd.DataFrame(rows)
+
+
+def load_f_source(name: str, ft_dir: Path = FT_DIR) -> pd.DataFrame:
+    """Spliced source (plan I): the zero-shot twin's forecasts for anchors before 2022, then the fine-tuned
+    folds 2022..2024. Refuses unless the fine-tuned rows cover exactly the twin's (anchor, ticker, variate, h)
+    keys on 2022..2024, so every F arm lives on the same cells as its twin."""
+    twin = pd.read_parquet(SRC[F_TWIN[name]])
+    if "variate" not in twin.columns:                                   # Z3 (single variate) has no variate column
+        twin.insert(2, "variate", "logrv")
+    ft = pd.concat([pd.read_parquet(Path(ft_dir) / name / str(y) / "preds.parquet") for y in F_YEARS], ignore_index=True)
+    ft["anchor"] = pd.to_datetime(ft["anchor"]).astype(twin["anchor"].dtype)
+    keys = ["anchor", "ticker", "variate", "h"]
+    if (pd.to_datetime(ft["anchor"]) < F_START).any() or (pd.to_datetime(ft["anchor"]) > F_END).any():
+        raise ValueError(f"{name}: fine-tuned anchors outside {F_START}..{F_END}")
+    tw = twin[(twin["anchor"] >= F_START) & (twin["anchor"] <= F_END)]
+    a = pd.MultiIndex.from_frame(tw[keys])
+    b = pd.MultiIndex.from_frame(ft[keys])
+    if b.has_duplicates or len(a.difference(b)) or len(b.difference(a)):
+        raise ValueError(f"{name}: fine-tuned keys differ from {F_TWIN[name]} on 2022-24 "
+                         f"(missing {len(a.difference(b))}, extra {len(b.difference(a))}, dup {int(b.duplicated().sum())})")
+    out = pd.concat([twin[twin["anchor"] < F_START], ft[twin.columns]], ignore_index=True)
+    return out.sort_values(keys).reset_index(drop=True)
+
+
+def f_twin_name(k: str) -> str:
+    return k.replace("F2ret", "N1ret").replace("F2rv", "N1rv").replace("F1", "Z3")
+
+
+def build_f_arms(D, S, mask1, mask5, u1: dict, va: dict, F: dict) -> tuple[set, set]:
+    """Adds the F arms to u1 / va in place, built exactly like their zero-shot twins (build_u1_arms,
+    build_vol_arms). Returns the new U1 and vol arm names."""
+    ret, cal, cols = D["ret"], D["ret"].index, D["ret"].columns
+    y1, steps = ret.shift(-1), (1, 2, 3, 4, 5)
+    r5sq = sum(ret.shift(-h) for h in steps) ** 2
+    A = (0.05, 0.01)
+    new1, newv = {}, {}
+    if "F2" in F:
+        new1["chr_F2ret"] = ra.chronos_vares(F["F2"], A, cal, cols, variate="ret", h=1)
+    for nm, src, var in (("chrfhs_F1", "F1", "logrv"), ("chrfhs_F2rv", "F2", "logrv")):
+        if src in F:
+            s = np.sqrt(ra.chronos_rv(F[src], (1,), cal, cols, variate=var))
+            new1[nm] = {a: rl.fhs_var_es(y1 / s, s, mask1, a, horizon=1) for a in A}
+    raw1 = list(new1)
+    for k in raw1:
+        new1[k + "_cal"] = {}
+        for a, (V, E) in new1[k].items():
+            c = rl.conformal_quantile_scale(y1, V, mask1, a, horizon=1)
+            new1[k + "_cal"][a] = (V.mul(c, axis=0), E.mul(c, axis=0))
+    pV, pE = u1[MIX_PARTNER_U1][0.05]
+    for k in raw1:
+        V, E = new1[k][0.05]
+        new1[f"mixeq_{k}"] = {0.05: (rl.vincentize([V, pV], [0.5, 0.5]), rl.vincentize([E, pE], [0.5, 0.5]))}
+        (fv, fe), _ = rl.rolling_mixture("vares", {k: (V, E), "p": (pV, pE)}, y1, mask1, horizon=1, alpha=0.05)
+        new1[f"mixfit_{k}"] = {0.05: (fv, fe)}
+        (rv_, re_), _ = rl.rolling_mixture("vares", {k: (V, E), "p": (pV, pE)}, y1, mask1, horizon=1, alpha=0.05, state=S)
+        new1[f"mixreg_{k}"] = {0.05: (rv_, re_)}
+        print(f"  F mixture {k} done", flush=True)
+    if "F1" in F:
+        newv["chr_F1"] = ra.chronos_rv(F["F1"], steps, cal, cols, variate="logrv")
+    if "F2" in F:
+        newv["chr_F2rv"] = ra.chronos_rv(F["F2"], steps, cal, cols, variate="logrv")
+    P = va[MIX_PARTNER_VOL]
+    rv5 = sum(D["rv"].shift(-h) for h in steps)
+    for k in list(newv):
+        newv[f"mixeq_{k}"] = rl.geo_mix([newv[k], P], [0.5, 0.5])
+        newv[f"mixfit_{k}"], _ = rl.rolling_mixture("vol", {k: newv[k], "p": P}, rv5, mask5, horizon=5)
+        newv[f"mixreg_{k}"], _ = rl.rolling_mixture("vol", {k: newv[k], "p": P}, rv5, mask5, horizon=5, state=S)
+        print(f"  F vol mixture {k} done", flush=True)
+    for k in list(newv):
+        newv[k + "_cal"] = newv[k].mul(al.rolling_vol_scale(newv[k], r5sq, mask5, horizon=5), axis=0)
+    u1.update(new1)
+    va.update(newv)
+    return set(new1), set(newv)
+
+
+
+def _twin_rows(losses: dict, new: set, key=lambda k: k, lower_better: bool = True) -> dict:
+    out = {}
+    for k in sorted(new):
+        tw = f_twin_name(k)
+        if key(tw) in losses and key(k) in losses:
+            a, b = losses[key(k)], losses[key(tw)]
+            ix = a.dropna().index.intersection(b.dropna().index)
+            out[k] = {"twin": tw, "loss_F": float(a.loc[ix].mean()), "loss_twin": float(b.loc[ix].mean()),
+                      "dm_t_F_vs_twin": al.dm_test(a.loc[ix], b.loc[ix], NW)["t"], "n_dates": len(ix)}
+    return out
+
+
+def stage_dev_ft(ft_dir: Path | str = FT_DIR, targets=("F1", "F2"), tag: str = "R4_dev_F", out_name: str = "ft",
+                 cache: str = "ft_paths") -> dict:
+    """Plan I: F arms (spliced sources) next to every existing arm, scored on 2022-01-03..2024-12-31 with
+    the unchanged evaluators; F vs zero-shot twin arm by arm; and the F rule against the frozen C arms."""
+    global LEDGER_PERIOD
+    ft_dir = Path(ft_dir)
+    D = load_panel(DEV_PANEL, ("ret", "rv", "eligible", "bench"))
+    ret, cal, cols = D["ret"], D["ret"].index, D["ret"].columns
+    S = pd.read_csv(OUT / "stress.csv", index_col=0, parse_dates=True)["stress"].reindex(cal)
+    in_dev = pd.DataFrame(np.repeat(cal.isin(span(cal, DEV))[:, None], ret.shape[1], 1), cal, cols)
+    in_f = pd.DataFrame(np.repeat(((cal >= F_START) & (cal <= F_END))[:, None], ret.shape[1], 1), cal, cols)
+    mask1 = D["eligible"] & in_dev & ret.shift(-1).notna()              # arms are BUILT on dev (warm-up) ...
+    mask5 = D["eligible"] & in_dev
+    rec = ft_records(ft_dir, targets)
+    print(rec.to_string(), flush=True)
+    F = {t: load_f_source(t, ft_dir) for t in targets}
+    for t, P in F.items():
+        print(f"{t}: {len(P)} rows spliced ({(P['anchor'] >= F_START).sum()} fine-tuned)", flush=True)
+    u1 = build_u1_arms(D, S, mask1)
+    va = build_vol_arms(D, S, mask5)
+    new1, newv = build_f_arms(D, S, mask1, mask5, u1, va, F)
+    LEDGER_PERIOD = "dev_2022_2024"
+    try:                                                                # ... and SCORED on 2022-24 only
+        L1, L4 = {}, {}
+        t1 = evaluate_u1(u1, D, S, mask1 & in_f, new=new1, tag=tag, losses_out=L1)
+        t23, paths = evaluate_vol(va, D, S, mask5 & in_f, new=newv, tag=tag, cache=cache)
+        t4 = evaluate_u4(va, D, S, mask5 & in_f, new=newv, tag=tag, losses_out=L4)
+    finally:
+        LEDGER_PERIOD = "dev_2021_2024"
+    # U2's frozen C (one-factor Chronos, N5) on the same universe and dates as the D·R·D arms
+    steps = (1, 2, 3, 4, 5)
+    R5 = ra.forward_simple_return(ret, steps)
+    rf = D["bench"]["rf"].reindex(cal)
+    rf5 = np.expm1(sum(np.log1p(rf.shift(-h)) for h in steps))
+    U = mask5 & in_f & R5.notna()
+    for k, v in va.items():
+        if gates(k):
+            U &= v.gt(0)
+    dates = pd.DatetimeIndex(paths["ewma"]["gmv"].index)
+    fac, port = build_n5_arms(D, build_n5_series(D), mask5)
+    beta_d = al.trailing_betas(ret, D["bench"]["imoex_ret"], 250, 120)
+    pn = ra.n5_portfolio_paths({"fac_chr": fac["fac_chr"]}, {"port_loghar": port["port_loghar"]}, beta_d, R5, rf5, U, dates,
+                               VT_TARGET_ANNUAL * np.sqrt(5 / 252))
+    common = pn["fac_chr"]["vt"].index
+    vt = {k: v["vt"].loc[common] for k, v in paths.items()}
+    vt.update({k: v["vt"] for k, v in pn.items()})
+    fee = {k: rl.fko_performance_fee(vt[k], vt["ewma"], 5, 252 / 5)["fee_bps_annual"] for k in vt}
+    # F vs zero-shot twin (reported, not claimed)
+    tw = []
+    for use, d in (("U1", _twin_rows({k: v for k, v in L1.items() if k[1] == 0.05}, new1, key=lambda k: (k, 0.05))),
+                   ("U3", _twin_rows({k: v["gmv"] ** 2 for k, v in paths.items()}, newv)),
+                   ("U4", _twin_rows(L4, newv))):
+        tw += [{"use": use, "arm": k, **r} for k, r in d.items()]
+    for k in sorted(newv & set(vt)):
+        if f_twin_name(k) in vt:
+            tw.append({"use": "U2", "arm": k, "twin": f_twin_name(k), "fee_bps_vs_ewma_F": fee[k],
+                       "fee_bps_vs_ewma_twin": fee[f_twin_name(k)], "n_dates": len(common)})
+    twins = pd.DataFrame(tw)
+    # F rule: best F arm per use vs frozen C, pooled primary loss on the common 2022-24 dates (point estimate)
+    rule = []
+    g1 = {k: L for (k, a), L in L1.items() if a == 0.05 and gates(k)}
+    g4 = {k: L for k, L in L4.items() if gates(k)}
+    g3 = {k: v["gmv"] ** 2 for k, v in paths.items()}
+    for use, L, lower in (("U1", g1, True), ("U3", g3, True), ("U4", g4, True)):
+        c = FROZEN_C[use]
+        cand = [k for k in L if k in (new1 if use == "U1" else newv)]
+        best = min(cand, key=lambda k: L[k].mean())
+        rule.append({"use": use, "C": c, "loss_C": float(L[c].mean()), "best_F": best, "loss_F": float(L[best].mean()),
+                     "dm_t_F_vs_C": al.dm_test(L[best], L[c], NW)["t"], "n_dates": len(L[c]),
+                     "F_replaces_C": bool(L[best].mean() < L[c].mean())})
+    candv = [k for k in newv if k in vt]
+    best = max(candv, key=lambda k: fee[k])
+    fb = rl.fko_fee_bootstrap(vt[best], vt["fac_chr"], 5, 252 / 5, n_boot=500)
+    rule.append({"use": "U2", "C": "fac_chr", "loss_C": -fee["fac_chr"], "best_F": best, "loss_F": -fee[best],
+                 "fee_bps_F_vs_C": fb["fee_bps_annual"], "fee_p_F_vs_C": fb["p_one_sided"], "n_dates": len(common),
+                 "F_replaces_C": bool(fee[best] > fee["fac_chr"])})
+    rule = pd.DataFrame(rule)
+    res = OUT / "dev"
+    res.mkdir(parents=True, exist_ok=True)
+    rec.to_csv(res / f"{out_name}_records.csv", index=False)
+    t1.to_csv(res / f"U1_{out_name}_table.csv"); t23.to_csv(res / f"U23_{out_name}_table.csv"); t4.to_csv(res / f"U4_{out_name}_table.csv")
+    twins.to_csv(res / f"{out_name}_vs_zeroshot.csv", index=False)
+    rule.to_csv(res / f"{out_name}_rule.csv", index=False)
+    pd.set_option("display.width", 250); pd.set_option("display.max_columns", 40)
+    print(twins.round(5).to_string())
+    print(rule.round(6).to_string())
+    return {"records": rec, "U1": t1, "U23": t23, "U4": t4, "twins": twins, "rule": rule}
+
 if __name__ == "__main__" and len(sys.argv) > 1:
     {"holdout_qa": stage_holdout_qa, "regime": stage_regime, "sources_dev": stage_sources_dev,
      "dev": stage_dev, "dev_u4": stage_dev_u4, "sources_n5": stage_sources_n5,
      "n5_series": lambda: stage_sources_n5(series_only=True), "dev_n5": stage_dev_n5,
      "sources_n6": stage_sources_n6, "dev_n6": stage_dev_n6,
-     "classical_parity": stage_classical_parity}[sys.argv[1]]()
+     "classical_parity": stage_classical_parity,
+     "dev_ft": lambda: stage_dev_ft(*sys.argv[2:3])}[sys.argv[1]]()
