@@ -70,12 +70,19 @@ def test_main_session_close_ignores_evening_and_morning():
     assert c.loc[pd.Timestamp("2024-03-04"), "A"] == 101
 
 
-def test_trading_calendar_drops_weekends_and_short_days():
-    idx = pd.concat([_bars("2024-03-04", "IMOEX", [("10:00", 1), ("18:40", 1)]),      # Mon full
-                     _bars("2024-03-05", "IMOEX", [("10:00", 1), ("14:00", 1)]),      # Tue short
-                     _bars("2024-03-09", "IMOEX", [("10:00", 1), ("18:40", 1)])])     # Sat
+def _session(day, ticker, n_bars, price=1.0):
+    """n_bars 10m bars from 10:00 (price constant)."""
+    ts = pd.date_range(f"{day} 10:00", periods=n_bars, freq="10min")
+    return _bars(day, ticker, [(t.strftime("%H:%M"), price) for t in ts])
+
+
+def test_trading_calendar_keeps_short_sessions_and_working_saturdays():
+    idx = pd.concat([_session("2024-03-04", "IMOEX", 54),     # Mon full
+                     _session("2022-03-24", "IMOEX", 23),     # 2022 reopening short session: kept
+                     _session("2024-03-05", "IMOEX", 5),      # fragment: dropped
+                     _session("2024-04-27", "IMOEX", 54)])    # official working Saturday: kept
     cal = al.trading_calendar(idx)
-    assert list(cal) == [pd.Timestamp("2024-03-04")]
+    assert list(cal) == [pd.Timestamp("2022-03-24"), pd.Timestamp("2024-03-04"), pd.Timestamp("2024-04-27")]
 
 
 def test_realized_variance_includes_overnight_term():
@@ -305,7 +312,7 @@ def test_canary_random_signal_and_permutation_null():
 
 def test_build_daily_panel_drops_index_only_day():
     days = pd.bdate_range("2022-01-03", periods=6)
-    idx = pd.concat([_bars(d.date(), "IMOEX", [("10:00", 1.0), ("18:40", 1.0)]) for d in days])
+    idx = pd.concat([_session(d.date(), "IMOEX", 54) for d in days])
     sh = pd.concat([_bars(d.date(), t, [("10:00", 100.0 + i), ("18:40", 100.0 + i)])
                     for i, d in enumerate(days) if i != 3 for t in ["A", "B", "C"]])   # day 3: no share prints
     P = al.build_daily_panel(sh, idx)

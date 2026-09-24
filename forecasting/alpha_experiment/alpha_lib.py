@@ -55,15 +55,14 @@ def main_session_bars(bars: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def trading_calendar(index_bars: pd.DataFrame, min_last_start: str = "18:30") -> pd.DatetimeIndex:
-    """Trading days = weekdays on which the index (IMOEX 10m) printed a full main session
-    (a bar starting >= `min_last_start`). Excludes holidays, the Feb-Mar 2022 closure and the
-    2025+ weekend sessions."""
+def trading_calendar(index_bars: pd.DataFrame, min_bars: int = 20) -> pd.DatetimeIndex:
+    """Trading days = days on which the index (IMOEX 10m) printed at least `min_bars` main-session
+    bars. Keeps the 2022-03-24..30 shortened sessions (~23 bars) and official working Saturdays
+    (2021-02-20, 2024-04-27/11-02/12-28), which IMOEX computes; excludes holidays, the Feb-Mar
+    2022 closure and the 2025+ weekend sessions (IMOEX is not computed on those)."""
     b = main_session_bars(index_bars)
-    last = b.groupby("date")["timestamp"].max().dt.strftime("%H:%M")
-    days = last.index[(last >= min_last_start).to_numpy()]
-    days = days[days.dayofweek < 5]
-    return pd.DatetimeIndex(sorted(days))
+    n = b.groupby("date").size()
+    return pd.DatetimeIndex(sorted(n.index[(n >= min_bars).to_numpy()]))
 
 
 def main_session_close(bars: pd.DataFrame, col: str = "close_adj") -> pd.DataFrame:
@@ -86,11 +85,11 @@ def build_daily_panel(share_bars: pd.DataFrame, index_bars: pd.DataFrame, ffill_
     correctly earns 0 then the catch-up return)."""
     cal = trading_calendar(index_bars)
     close_raw = main_session_close(share_bars).reindex(cal)
-    # drop index-only days (e.g. 2022-01-07: IMOEX bars printed, no share traded): require at
-    # least half the usual number of share prints
+    # drop index-only days (2022-01-07: IMOEX printed, zero shares traded). Threshold 20% of the
+    # usual print count keeps the 2022-03-24/25 partial reopening (~49% of names traded).
     n_print = close_raw.notna().sum(axis=1)
     usual = n_print.rolling(21, min_periods=1, center=True).median()
-    cal = cal[(n_print >= 0.5 * usual).to_numpy()]
+    cal = cal[(n_print >= 0.2 * usual).to_numpy()]
     close_raw = close_raw.reindex(cal)
     close = close_raw.ffill(limit=ffill_limit)
     stale = close_raw.isna() & close.notna()

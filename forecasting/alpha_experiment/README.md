@@ -122,6 +122,31 @@ Chronos's return-based σ is **not a better risk model** than EWMA or GARCH(1,1)
 
 Detailed tables are in `forecasting/runs/alpha_test/` (gitignored, reproducible with `alpha_run.py test` after deleting that dir; the code refuses a silent rerun). The trial ledger has all 8 dev trials and 6 test rows.
 
+### Data corrections found after the v1 test (2026-09-24), before any re-run
+
+A second data audit, prompted by review of the v1 results, found two real bugs. Both affected v1's dev and test numbers equally for Chronos and every baseline.
+
+**1. Dividend adjustment one trading day late before 2023-07-31** (in `data_pipeline`)
+- **Cause:** the poptimizer `day` field is the *register* date, but it was used as the ex-date.
+- **Effect:** under T+2 settlement the price gap happens one trading day earlier. So `close_adj` carried a spurious −div / +div pair around every pre-T+1 dividend.
+  - Across 133 events with yield above 2%, the mean was −5.0% then +6.8%.
+  - The worst case was GAZP 2022-10: −20.7%, then +36.8%.
+- **Fix:** `ex_date_from_record` derives the ex-date from the settlement regime (T+2 → T+1 switch on 2023-07-31).
+- **Missing records added:** 5 verified dividends that the dump lacked (SVCB ×2, WUSH ×2, RUAL).
+- **Verified after the fix** on 288 events: adjusted returns the day before and after the ex-date are ≈0 (±0.2%). The ex-day residual of +1.0–1.6% is the expected gross-vs-after-tax dividend gap.
+- **Not changed:** same-date multiple rows in the dump were checked. They are genuine separate declarations or components that sum to the official amount, not duplicates.
+
+**2. Calendar dropped 9 real trading days** (in `alpha_lib.trading_calendar`)
+- **Which days:** the 2022-03-24..30 shortened reopening sessions, and the official working Saturdays 2021-02-20, 2024-04-27, 2024-11-02 and 2024-12-28.
+- **Cause:** the rule required a bar at or after 18:30 on a weekday. The new rule is at least 20 IMOEX main-session bars on any day.
+- **Also changed:** the index-only-day filter threshold went from 50% to 20% of the usual share prints. This still drops 2022-01-07 (0 prints) and keeps the partial 2022-03-24/25 reopening (49%).
+- **Effect on the panel:** 1,240 → 1,249 days. The v1 panel is kept in `forecasting/runs/alpha_data_v1/`.
+
+**Consequences**
+- The v1 gate numbers above were computed on the uncorrected data. They stay as recorded and are not edited.
+- A corrected-data re-run of the same frozen pipeline has **not** been run yet. It will re-use 2024, and must be reported as such.
+- The rebuilt `close_adj` also changes the inputs of every earlier experiment in `FINDINGS.md` that used `close_adj`. Their recorded results were not recomputed.
+
 ### Next
 
 The holdout (2025-01 → 2026-09) is **still sealed**. The improvement wave (plan Part 3) has not been run. It is being re-prioritized in light of these results before any of it runs.

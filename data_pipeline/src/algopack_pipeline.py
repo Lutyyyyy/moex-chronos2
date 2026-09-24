@@ -561,10 +561,40 @@ KNOWN_SPLITS = {
     "BELU": [{"date": date(2024, 8, 22), "ratio": 8.0}],
 }
 
+# Cash dividends missing from the poptimizer dump, verified 2026-09-24 against dohod.ru /
+# company disclosures (see forecasting/alpha_experiment/README.md, data audit). Same schema as
+# the dump: `day` is the REGISTER (record) date, amounts in RUB per share.
+KNOWN_EXTRA_DIVIDENDS = {
+    "SVCB": [{"day": date(2024, 7, 8), "dividend": 1.14},     # FY2023, first SVCB dividend
+             {"day": date(2025, 7, 8), "dividend": 0.35}],    # FY2024
+    "WUSH": [{"day": date(2023, 12, 4), "dividend": 10.25},   # 9M2023
+             {"day": date(2024, 12, 6), "dividend": 2.11}],   # 9M2024
+    "RUAL": [{"day": date(2022, 10, 20), "dividend": 1.18}],  # only RUAL dividend 2020-2024
+}
+
+# MOEX equities settled T+2 until trades of 2023-07-28 and T+1 from trades of 2023-07-31 on.
+T1_SETTLEMENT_START = date(2023, 7, 31)
+
+
+def ex_date_from_record(record: date, trading_days) -> date:
+    """First trading day on which a buyer is NOT on the register at `record`, i.e. the first
+    trading day whose settlement (T+2 before T1_SETTLEMENT_START, T+1 from it) falls after the
+    record date. This is where the dividend price gap appears. `trading_days`: sorted dates.
+    The poptimizer dump's `day` is the register date, not the ex-date: treating it as the
+    ex-date put every pre-2023-07-31 adjustment one trading day late (verified on 133 events)."""
+    import bisect
+    j = bisect.bisect_right(trading_days, record)     # first trading day after the record date
+    if j >= 2 and trading_days[j - 2] < T1_SETTLEMENT_START:
+        return trading_days[j - 2]                     # T+2: trade on [j-2] settles on [j] > record
+    if j >= 1:
+        return trading_days[j - 1]                     # T+1: trade on [j-1] settles on [j] > record
+    return record
+
 
 def fetch_dividends(cfg: Config, fetcher=None) -> pd.DataFrame:
     """Download (or load cached) per-ticker dividend history from poptimizer's community dump.
-    Returns columns: ticker, ex_date, dividend. Cached under <output_root>/dividends.json.
+    Returns columns: ticker, record_date, dividend (the dump's `day` is the register date), plus
+    KNOWN_EXTRA_DIVIDENDS. Cached under <output_root>/dividends.json.
     `fetcher(url) -> bytes` defaults to a plain `requests.get`; tests inject a fake to stay offline."""
     cache = cfg.output_root / "dividends.json"
     if not cache.exists():
@@ -576,24 +606,30 @@ def fetch_dividends(cfg: Config, fetcher=None) -> pd.DataFrame:
         tmp.write_bytes(content)
         os.replace(tmp, cache)
     raw = json.loads(cache.read_text())
-    rows = [{"ticker": rec["uid"], "ex_date": pd.to_datetime(d["day"]).date(), "dividend": float(d["dividend"])}
+    rows = [{"ticker": rec["uid"], "record_date": pd.to_datetime(d["day"]).date(), "dividend": float(d["dividend"])}
             for rec in raw for d in rec["df"]]
-    return pd.DataFrame(rows, columns=["ticker", "ex_date", "dividend"])
+    rows += [{"ticker": t, "record_date": d["day"], "dividend": float(d["dividend"])}
+             for t, ds in KNOWN_EXTRA_DIVIDENDS.items() for d in ds]
+    return pd.DataFrame(rows, columns=["ticker", "record_date", "dividend"])
 
 
-def compute_close_adj(close: pd.Series, timestamp: pd.Series, ticker: str, dividends: pd.DataFrame) -> pd.Series:
-    """Backward-multiplicative adjusted close for one ticker's daily-sorted candle rows.
-    For each dividend, prices strictly before the ex-date are scaled by (1 - div/close_prev),
-    where close_prev is the last close on or before the trading day preceding ex_date. Splits
-    from KNOWN_SPLITS are applied the same way with factor 1/ratio. Adjustments compose
-    (oldest dividend/split applied last) so multiple corporate actions stack correctly."""
+def compute_close_adj(close: pd.Series, timestamp: pd.Series, ticker: str, dividends: pd.DataFrame,
+                      trading_days=None) -> pd.Series:
+    """Backward-multiplicative adjusted close for one ticker's time-sorted candle rows.
+    Each dividend's ex-date is derived from its register date via `ex_date_from_record` on the
+    exchange `trading_days` (sorted dates; defaults to this ticker's own dates). Prices strictly
+    before the ex-date are scaled by (1 - div/close_prev), where close_prev is the last close
+    before the ex-date. Splits from KNOWN_SPLITS (dates are already ex-dates) are applied the
+    same way with factor 1/ratio. Adjustments compose, so multiple corporate actions stack."""
     close = close.astype(float)
     dates = timestamp.dt.date if hasattr(timestamp, "dt") else pd.Series([t.date() for t in timestamp], index=close.index)
+    days = sorted(set(trading_days)) if trading_days is not None else sorted(set(dates))
     adj = pd.Series(1.0, index=close.index)
 
     events = []  # (ex_date, factor)
     for _, row in dividends[dividends["ticker"] == ticker].iterrows():
-        prior = dates < row["ex_date"]
+        ex = ex_date_from_record(row["record_date"], days)
+        prior = dates < ex
         if not prior.any():
             continue
         close_prev = close[prior].iloc[-1]
@@ -602,7 +638,7 @@ def compute_close_adj(close: pd.Series, timestamp: pd.Series, ticker: str, divid
         factor = 1.0 - row["dividend"] / close_prev
         if factor <= 0:
             continue  # implausible (dividend >= price); skip rather than corrupt history
-        events.append((row["ex_date"], factor))
+        events.append((ex, factor))
     for split in KNOWN_SPLITS.get(ticker, []):
         events.append((split["date"], 1.0 / split["ratio"]))
 
@@ -646,7 +682,8 @@ def finalize(df: pd.DataFrame, dataset: str, cfg: Config, windows: dict, group: 
     df = _numeric(df.copy())
 
     if dataset == "candles" and group == "shares" and "close" in df.columns and dividends is not None:
-        parts = [compute_close_adj(g["close"], g["timestamp"], t, dividends)
+        trading_days = sorted(set(df["timestamp"].dt.date))   # exchange calendar = union over all tickers
+        parts = [compute_close_adj(g["close"], g["timestamp"], t, dividends, trading_days)
                  for t, g in df.groupby("ticker", sort=False)]
         df["close_adj"] = pd.concat(parts).sort_index() if parts else pd.Series(dtype=float)
 
