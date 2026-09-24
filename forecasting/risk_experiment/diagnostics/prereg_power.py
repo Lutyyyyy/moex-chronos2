@@ -20,8 +20,9 @@ N_HOLD = 434 - 5                                    # holdout forecast dates wit
 Z = stats.norm.ppf(0.95)
 
 # dev-best arms (pooled primary loss); fine-tuned arms are added once the Colab outputs exist
-PAIRS = {"U1": ("mixeq_chr_N1ret", "fhs_loghar_cal"), "U2": ("fac_chr", "fac_ewma_cal"),
-         "U3": ("fac_chr_cal", "fac_loghar_cal"), "U4": ("mixeq_chr_N4rv_cal", "ols_beta")}
+# re-selected after the plan-H universe correction (dev-best Chronos-containing arm, dev-best classical arm)
+PAIRS = {"U1": ("mixeq_chr_N1ret", "fhs_loghar"), "U2": ("fac_chr", "port_loghar"),
+         "U3": ("mixeq_chr_N4rv", "ewma"), "U4": ("mixeq_chr_Z3_cal", "ols_beta")}
 
 
 def dev_setup():
@@ -37,10 +38,10 @@ def u1_losses(D, S, mask1):
     y1 = D["ret"].shift(-1)
     M = mask1.copy()
     for k, v in arms.items():
-        if 0.05 in v:
+        if 0.05 in v and rr.gates(k):
             V, E = v[0.05]
             M &= V.lt(0) & E.lt(V)
-    return {k: rl.fz0_panel(y1, *arms[k][0.05], M, 0.05) for k in ("mixeq_chr_N1ret", "fhs_loghar_cal", "rm", "garch_t")}
+    return {k: rl.fz0_panel(y1, *arms[k][0.05], M, 0.05) for k in ("mixeq_chr_N1ret", "fhs_loghar", "rm", "garch_t")}
 
 
 def u23_paths():
@@ -59,12 +60,13 @@ def u4_losses(D, S, mask5):
     Hh = ra.hedge_ratios(va, rho, al.vol_ewma(r_f.to_frame(), 5).iloc[:, 0])
     Hh["ols_beta"] = al.trailing_betas(ret, r_f, 250, 120)
     U = (mask5 & R5s.notna()).mul(R5f.notna(), axis=0).astype(bool)
-    for h in Hh.values():
-        U &= np.isfinite(h)
+    for k, h in Hh.items():
+        if rr.gates(k):
+            U &= np.isfinite(h)
     dates = U.index[U.sum(axis=1) >= 10]
     U = U.loc[dates]
     return {k: (ra.hedged_returns(Hh[k], R5s, R5f).loc[dates] ** 2).where(U).mean(axis=1)
-            for k in ("mixeq_chr_N4rv_cal", "ols_beta", "ewma", "garch")}
+            for k in ("mixeq_chr_Z3_cal", "ols_beta", "ewma", "garch")}
 
 
 def power(delta, se_h, true_diff=0.0):
@@ -79,7 +81,9 @@ def comparisons(S, losses: dict, P) -> pd.DataFrame:
     rows = []
     for use, (L, ewma, garch) in losses.items():
         c, b = PAIRS[use]
-        for arm, ref in ((c, b), (c, ewma), (c, garch), (b, ewma), (b, garch)):
+        for arm, ref in dict.fromkeys(((c, b), (c, ewma), (c, garch), (b, ewma), (b, garch))):
+            if arm == ref:
+                continue
             for regime, sel in (("pooled", None), ("calm", 0), ("stress", 1)):
                 d = (L[arm] - L[ref]).dropna()
                 base = L[ref].reindex(d.index)
@@ -107,7 +111,7 @@ def main():
     rows = []
     L1 = u1_losses(D, S, mask1)
     P = u23_paths()
-    L3 = {k: P[(k, "gmv")] ** 2 for k in ("fac_chr_cal", "fac_loghar_cal", "ewma", "garch")}
+    L3 = {k: P[(k, "gmv")] ** 2 for k in ("mixeq_chr_N4rv", "ewma", "garch")}
     L4 = u4_losses(D, S, mask5)
     to_vol = lambda L: np.sqrt(L * 252 / 5)                               # noqa: E731  loss (mean r5²) -> annual vol
     for use, L, ref in (("U1", L1, "rm"), ("U3", L3, "ewma"), ("U4", L4, "ewma")):

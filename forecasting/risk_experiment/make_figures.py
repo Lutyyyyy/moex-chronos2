@@ -18,7 +18,9 @@ USES = {"U1": "1-day VaR/ES (FZ0 loss)", "U3": "Min-variance portfolio (realized
 LABEL = {"rm": "RiskMetrics", "garch_t": "GARCH-t", "garch": "GARCH", "ewma": "EWMA", "ols_beta": "rolling OLS beta",
          "fhs_loghar_cal": "FHS log-HAR (cal.)", "mixeq_chr_N1ret": "Chronos + FHS log-HAR mix",
          "fac_chr_cal": "Chronos one-factor (cal.)", "fac_loghar_cal": "log-HAR one-factor (cal.)",
-         "mixeq_chr_N4rv_cal": "Chronos + log-HAR mix (cal.)", "fac_chr": "Chronos one-factor", "fac_ewma_cal": "EWMA one-factor (cal.)"}
+         "mixeq_chr_N4rv_cal": "Chronos + log-HAR mix (cal.)", "fac_chr": "Chronos one-factor", "fac_ewma_cal": "EWMA one-factor (cal.)",
+         "fhs_loghar": "FHS log-HAR", "mixeq_chr_N4rv": "Chronos (5-day) + log-HAR mix",
+         "mixeq_chr_Z3_cal": "Chronos + log-HAR mix (cal.)", "port_loghar": "log-HAR on portfolio RV"}
 
 
 def nice(arm: str, chronos: set | None = None) -> str:

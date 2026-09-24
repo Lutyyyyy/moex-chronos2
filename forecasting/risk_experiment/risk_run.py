@@ -19,6 +19,7 @@ Later stages (bundle_dev, dev, select, holdout_sources, bundle_holdout, holdout)
 in R2-R7.
 """
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -470,7 +471,19 @@ def build_vol_arms(D, S, mask5) -> dict:
     return arms
 
 
+# Arms that do NOT gate the common evaluation universe (plan H): the regime mixtures are undefined for
+# months while the stress state lacks history, and gating on them silently dropped 2021-11..2022-03 from
+# every comparison. They are scored descriptively on their own dates (column own_dates).
+GATE_EXCLUDE = ("mixreg_",)
+
+
+def gates(k: str) -> bool:
+    return not k.startswith(GATE_EXCLUDE)
+
+
 def _ledger(use: str, arm: str, metric: str, value: float, n: int, tag: str = "R4_dev"):
+    if os.environ.get("RISK_NO_LEDGER") == "1":                        # re-scoring: a correction, not new trials
+        return
     al.append_trial(LEDGER, use=use, tag=tag, period="dev_2021_2024", arm=arm, metric=metric,
                     value=float(value), n=int(n))
 
@@ -493,26 +506,30 @@ def evaluate_u1(arms: dict, D, S, mask1, new: set | None = None, tag: str = "R4_
         M_old = mask1.copy()
         for k in names:
             V, E = arms[k][alpha]
-            M &= V.lt(0) & E.lt(V)
-            if not new or k not in new:
-                M_old &= V.lt(0) & E.lt(V)
+            if gates(k):
+                M &= V.lt(0) & E.lt(V)
+                if not new or k not in new:
+                    M_old &= V.lt(0) & E.lt(V)
         if new:
             _same_universe(M, M_old, f"U1 alpha={alpha}")
-        Ls = {k: rl.fz0_panel(y1, *arms[k][alpha], M, alpha) for k in names}
-        dates = Ls[names[0]].index
+        Mk = {k: M if gates(k) else M & arms[k][alpha][0].lt(0) & arms[k][alpha][1].lt(arms[k][alpha][0]) for k in names}
+        Ls = {k: rl.fz0_panel(y1, *arms[k][alpha], Mk[k], alpha) for k in names}
+        dates = Ls[[k for k in names if gates(k)][0]].index
         s = S.reindex(dates)
         classical = [k for k in names if k.split("_cal")[0] in CLASSICAL_U1]
         best_cl = min(classical, key=lambda k: Ls[k].mean())
         for k in names:
             V, E = arms[k][alpha]
-            hits = (y1 < V).where(M)
+            M_ = Mk[k]
+            hits = (y1 < V).where(M_)
             h_pool = hits.stack().dropna()
-            r = {"alpha": alpha, "fz0": Ls[k].mean(), "fz0_calm": Ls[k][s == 0].mean(), "fz0_stress": Ls[k][s == 1].mean(),
+            sk = S.reindex(Ls[k].index)
+            r = {"alpha": alpha, "fz0": Ls[k].mean(), "fz0_calm": Ls[k][sk == 0].mean(), "fz0_stress": Ls[k][sk == 1].mean(),
                  "hit_rate": float(h_pool.mean()), "kupiec_p": rl.kupiec(h_pool.to_numpy(), alpha)["p"],
                  "christoffersen_reject_share": float(np.mean([rl.christoffersen(hits[t].dropna().to_numpy(), alpha)["p_ind"] < 0.05
                                                                for t in hits.columns if hits[t].notna().sum() > 250])),
-                 "z2": rl.acerbi_szekely_z2(y1.where(M).to_numpy().ravel(), V.where(M).to_numpy().ravel(), E.where(M).to_numpy().ravel(), alpha),
-                 "n_dates": len(dates), "n_obs": int(M.sum().sum()), "best_classical": best_cl}
+                 "z2": rl.acerbi_szekely_z2(y1.where(M_).to_numpy().ravel(), V.where(M_).to_numpy().ravel(), E.where(M_).to_numpy().ravel(), alpha),
+                 "n_dates": len(Ls[k]), "n_obs": int(M_.sum().sum()), "best_classical": best_cl, "own_dates": not gates(k)}
             for ref in ("rm", "garch_t", best_cl):
                 if k != ref:
                     r[f"dm_t_vs_{'best_classical' if ref == best_cl else ref}"] = al.dm_test(Ls[k], Ls[ref], NW)["t"]
@@ -540,11 +557,14 @@ def evaluate_vol(arms: dict, D, S, mask5, new: set | None = None, tag: str = "R4
     U = mask5 & R5.notna()
     U_old = U.copy()
     for k, v in arms.items():
-        U &= v.gt(0)
-        if not new or k not in new:
-            U_old &= v.gt(0)
+        if gates(k):
+            U &= v.gt(0)
+            if not new or k not in new:
+                U_old &= v.gt(0)
     if new:
         _same_universe(U, U_old, "U2/U3")
+    own = {k: v for k, v in arms.items() if not gates(k)}
+    arms_all, arms = arms, {k: v for k, v in arms.items() if gates(k)}
     dates = U.index[U.sum(axis=1) >= 10]
     ec = al.ewma_corr(ret)                                              # {"cols": Index, "C": {date: ndarray}}
     corr = {d: pd.DataFrame(C, index=ec["cols"], columns=ec["cols"]) for d, C in ec["C"].items() if d in set(dates)}
@@ -568,6 +588,20 @@ def evaluate_vol(arms: dict, D, S, mask5, new: set | None = None, tag: str = "R4
         paths = ra.portfolio_paths(arms, corr, R5, rf5, U, dates, target5,
                                    gmv_share={k: k[:-4] for k in arms if k.endswith("_cal")})
         pd.concat({k: pd.DataFrame(v) for k, v in paths.items()}, axis=1).to_parquet(fp)
+    own_paths = {}
+    if own:                                                             # descriptive, on their own dates, vs EWMA/GARCH
+        fo = OUT / "dev" / "cache" / "portfolio_paths_own.parquet"
+        if fo.exists():
+            Po = pd.read_parquet(fo)
+            own_paths = {k: {m: Po[(k, m)] for m in ("gmv", "vt", "vt_exposure")} for k in Po.columns.levels[0]}
+        else:
+            Uo = U.copy()
+            for v in own.values():
+                Uo &= v.gt(0)
+            do = Uo.index[Uo.sum(axis=1) >= 10]
+            own_paths = ra.portfolio_paths({**own, "ewma": arms["ewma"], "garch": arms["garch"]}, corr, R5, rf5, Uo, do, target5,
+                                           gmv_share={k: k[:-4] for k in own if k.endswith("_cal") and k[:-4] in own})
+            pd.concat({k: pd.DataFrame(v) for k, v in own_paths.items()}, axis=1).to_parquet(fo)
     s = S.reindex(paths[raw_names[0]]["gmv"].index)
     classical = [k for k in arms if k.split("_cal")[0] in CLASSICAL_VOL]
     gmv_loss = {k: paths[k]["gmv"] ** 2 for k in arms}
@@ -600,6 +634,19 @@ def evaluate_vol(arms: dict, D, S, mask5, new: set | None = None, tag: str = "R4
         if not new or k in new:
             _ledger("U3", k, "gmv_realized_var", L.mean(), len(L), tag=tag)
             _ledger("U2", k, "vt_fee_bps_vs_ewma", fees_vs_ewma[k], len(vt), tag=tag)
+    for k in own:
+        P_, E_, G_ = own_paths[k], own_paths["ewma"], own_paths["garch"]
+        L = P_["gmv"] ** 2
+        so = S.reindex(L.index)
+        rows[k] = {"own_dates": True, "n_dates": len(L), "qlike_rv5": al.vol_loss_panel(rv5, own[k], U & own[k].gt(0)).mean(),
+                   "gmv_ann_vol": float(np.sqrt(L.mean() * 252 / 5)), "gmv_ann_vol_calm": float(np.sqrt(L[so == 0].mean() * 252 / 5)),
+                   "gmv_ann_vol_stress": float(np.sqrt(L[so == 1].mean() * 252 / 5)),
+                   "gmv_dm_t_vs_ewma": al.dm_test(L, E_["gmv"] ** 2, NW)["t"], "gmv_dm_t_vs_garch": al.dm_test(L, G_["gmv"] ** 2, NW)["t"],
+                   "vt_ann_vol": float(np.sqrt((P_["vt"] ** 2).mean() * 252 / 5)), "vt_mean_exposure": float(P_["vt_exposure"].mean()),
+                   "vt_fee_bps_vs_ewma": rl.fko_performance_fee(P_["vt"], E_["vt"], 5, 252 / 5)["fee_bps_annual"],
+                   "ewma_gmv_ann_vol_same_dates": float(np.sqrt((E_["gmv"] ** 2).mean() * 252 / 5))}
+    for k in rows:
+        rows[k].setdefault("own_dates", False)
     return pd.DataFrame(rows).T, paths
 
 
@@ -621,24 +668,27 @@ def evaluate_u4(arms: dict, D, S, mask5, new: set | None = None, tag: str = "R4_
     U = U.mul(R5f.notna(), axis=0).astype(bool)
     U_old = U.copy()
     for k, h in Hh.items():
-        U &= np.isfinite(h)
-        if not new or k not in new:
-            U_old &= np.isfinite(h)
+        if gates(k):
+            U &= np.isfinite(h)
+            if not new or k not in new:
+                U_old &= np.isfinite(h)
     if new:
         _same_universe(U, U_old, "U4")
     dates = U.index[U.sum(axis=1) >= 10]
     U = U.loc[dates]
-    loss = {k: (ra.hedged_returns(h, R5s, R5f).loc[dates] ** 2).where(U).mean(axis=1) for k, h in Hh.items()}
+    Uk = {k: U if gates(k) else U & np.isfinite(h.loc[dates]) for k, h in Hh.items()}
+    loss = {k: (ra.hedged_returns(h, R5s, R5f).loc[dates] ** 2).where(Uk[k]).mean(axis=1).dropna() for k, h in Hh.items()}
     unhedged = (R5s.loc[dates] ** 2).where(U).mean(axis=1)
     s = S.reindex(dates)
-    classical = [k for k in Hh if k.split("_cal")[0] in CLASSICAL_VOL + ["ols_beta"]]
+    classical = [k for k in Hh if gates(k) and k.split("_cal")[0] in CLASSICAL_VOL + ["ols_beta"]]
     best = min(classical, key=lambda k: loss[k].mean())
     rows = {}
     for k, L in loss.items():
-        r = {"u4_ann_vol": float(np.sqrt(L.mean() * 252 / 5)), "u4_ann_vol_calm": float(np.sqrt(L[s == 0].mean() * 252 / 5)),
-             "u4_ann_vol_stress": float(np.sqrt(L[s == 1].mean() * 252 / 5)), "hedge_effectiveness": float(1 - L.mean() / unhedged.mean()),
-             "mean_h": float(Hh[k].loc[dates].where(U).stack().mean()), "n_dates": len(L), "n_obs": int(U.sum().sum()),
-             "unhedged_ann_vol": float(np.sqrt(unhedged.mean() * 252 / 5)), "best_classical": best}
+        sk = s.reindex(L.index)
+        r = {"u4_ann_vol": float(np.sqrt(L.mean() * 252 / 5)), "u4_ann_vol_calm": float(np.sqrt(L[sk == 0].mean() * 252 / 5)),
+             "u4_ann_vol_stress": float(np.sqrt(L[sk == 1].mean() * 252 / 5)), "hedge_effectiveness": float(1 - L.mean() / unhedged.reindex(L.index).mean()),
+             "mean_h": float(Hh[k].loc[dates].where(Uk[k]).stack().mean()), "n_dates": len(L), "n_obs": int(Uk[k].sum().sum()),
+             "unhedged_ann_vol": float(np.sqrt(unhedged.mean() * 252 / 5)), "best_classical": best, "own_dates": not gates(k)}
         for ref, lab in (("ewma", "ewma"), ("garch", "garch"), (best, "best_classical")):
             if k != ref:
                 r[f"dm_t_vs_{lab}"] = al.dm_test(L, loss[ref], NW)["t"]
@@ -725,8 +775,9 @@ def stage_dev_n5() -> pd.DataFrame:
     rf = D["bench"]["rf"].reindex(cal)
     rf5 = np.expm1(sum(np.log1p(rf.shift(-h)) for h in steps))
     U = mask5 & R5.notna()                                              # the exact U2/U3 universe (evaluate_vol)
-    for v in va.values():
-        U &= v.gt(0)
+    for k, v in va.items():
+        if gates(k):
+            U &= v.gt(0)
     Pc = pd.read_parquet(OUT / "dev" / "cache" / "portfolio_paths.parquet")
     dates = Pc.index
     S5 = build_n5_series(D)

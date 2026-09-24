@@ -28,12 +28,13 @@ al, rl, ra, cs = rr.al, rr.rl, rr.ra, rr.cs
 NW, Z = rr.NW, stats.norm.ppf(0.95)
 
 # ── frozen by the pre-registration (dev selection; F rule applied before the PREREG commit) ──────────────
-FROZEN = {"U1": {"C": "mixeq_chr_N1ret", "B": "fhs_loghar_cal", "refs": ("rm", "garch_t")},
-          "U2": {"C": "fac_chr", "B": "fac_ewma_cal", "refs": ("ewma", "garch")},
-          "U3": {"C": "fac_chr_cal", "B": "fac_loghar_cal", "refs": ("ewma", "garch")},
-          "U4": {"C": "mixeq_chr_N4rv_cal", "B": "ols_beta", "refs": ("ewma", "garch")}}
-MARGIN_COLS = {"U1": "delta_50pct_gap", "U3": "delta_0.5pp_vol", "U4": "delta_0.5pp_vol"}   # non-inferiority δ
-SOURCES = ("N1", "N4", "N5m", "N5e")
+# (re-selected after the plan-H universe correction)
+FROZEN = {"U1": {"C": "mixeq_chr_N1ret", "B": "fhs_loghar", "refs": ("rm", "garch_t")},
+          "U2": {"C": "fac_chr", "B": "port_loghar", "refs": ("ewma", "garch")},
+          "U3": {"C": "mixeq_chr_N4rv", "B": "ewma", "refs": ("ewma", "garch")},
+          "U4": {"C": "mixeq_chr_Z3_cal", "B": "ols_beta", "refs": ("ewma", "garch")}}
+MARGIN_COLS = {"U1": "delta_50pct_gap", "U4": "delta_0.5pp_vol"}   # non-inferiority δ (U2, U3: not testable)
+SOURCES = ("Z3", "N1", "N4", "N5m", "N5e")
 
 
 def margins() -> dict:
@@ -53,7 +54,7 @@ def holdout_source_path(name: str) -> Path:
 def load_sources(period: str) -> dict:
     """Dev forecasts; for the holdout, dev + holdout forecasts concatenated (the panels agree on the overlap,
     holdout_qa), so rolling calibrations at the start of 2025 see late-2024 forecasts."""
-    dev = {"N1": rr.SRC["N1"], "N4": rr.SRC["N4"], "N5m": rr.source_path("N5m"), "N5e": rr.source_path("N5e")}
+    dev = {"Z3": rr.SRC["Z3"], "N1": rr.SRC["N1"], "N4": rr.SRC["N4"], "N5m": rr.source_path("N5m"), "N5e": rr.source_path("N5e")}
     P = {k: pd.read_parquet(v) for k, v in dev.items()}
     if period == "holdout":
         for k in SOURCES:
@@ -84,8 +85,7 @@ def build_arms(period: str, D, inb) -> dict:
     # U1 (as build_u1_arms)
     s_lh = np.sqrt(al.vol_har_log(rv, (1,), mask=D["eligible"], pooled=True, market=True))
     V, E = rl.fhs_var_es(y1 / s_lh, s_lh, mask1, 0.05, horizon=1)
-    c = rl.conformal_quantile_scale(y1, V, mask1, 0.05, horizon=1)
-    A["fhs_loghar_cal"] = (V.mul(c, axis=0), E.mul(c, axis=0))
+    A["fhs_loghar"] = (V, E)
     Vc, Ec = ra.chronos_vares(P["N1"], (0.05,), cal, cols, variate="ret", h=1)[0.05]
     A["mixeq_chr_N1ret"] = (rl.vincentize([Vc, V], [0.5, 0.5]), rl.vincentize([Ec, E], [0.5, 0.5]))
     A["rm"] = ra.normal_var_es(np.sqrt(al.vol_ewma(ret, 1)), 0.05)
@@ -95,13 +95,14 @@ def build_arms(period: str, D, inb) -> dict:
     Vc5 = rr.classical_vol_panel(D)
     r5sq = sum(ret.shift(-h) for h in steps) ** 2
     A["ewma"], A["garch"] = Vc5["ewma"], Vc5["garch"]
-    mix = rl.geo_mix([ra.chronos_rv(P["N4"], (1,), cal, cols, variate="logrv"), Vc5["loghar_pooled_mkt"]], [0.5, 0.5])
-    A["mixeq_chr_N4rv_cal"] = mix.mul(al.rolling_vol_scale(mix, r5sq, mask5, horizon=5), axis=0)
+    A["mixeq_chr_N4rv"] = rl.geo_mix([ra.chronos_rv(P["N4"], (1,), cal, cols, variate="logrv"), Vc5["loghar_pooled_mkt"]], [0.5, 0.5])
+    mz = rl.geo_mix([ra.chronos_rv(P["Z3"], steps, cal, cols), Vc5["loghar_pooled_mkt"]], [0.5, 0.5])
+    A["mixeq_chr_Z3_cal"] = mz.mul(al.rolling_vol_scale(mz, r5sq, mask5, horizon=5), axis=0)
     # N5 factor arms (as build_n5_arms)
     S5 = rr.n5_series_from_panel(D) if period == "holdout" else rr.build_n5_series(D)
     lh = None if period == "dev" else al.vol_har_log(S5["resid_rv"], steps, mask=D["eligible"], pooled=True, market=True)
-    fac, _ = rr.build_n5_arms(D, S5, mask5, preds=(P["N5m"], P["N5e"]), loghar_resid=lh)
-    A.update({k: fac[k] for k in ("fac_chr", "fac_chr_cal", "fac_ewma_cal", "fac_loghar_cal")})
+    fac, port = rr.build_n5_arms(D, S5, mask5, preds=(P["N5m"], P["N5e"]), loghar_resid=lh)
+    A["fac_chr"], A["port_loghar"] = fac["fac_chr"], port["port_loghar"]
     A["_beta_d"] = al.trailing_betas(ret, D["bench"]["imoex_ret"], 250, 120)
     return A
 
@@ -131,35 +132,33 @@ def evaluate(period: str) -> dict:
     # U1
     y1 = ret.shift(-1)
     M = D["eligible"] & ine & y1.notna()
-    for k in ("mixeq_chr_N1ret", "fhs_loghar_cal", "rm", "garch_t"):
+    for k in ("mixeq_chr_N1ret", "fhs_loghar", "rm", "garch_t"):
         V, E = A[k]
         M &= V.lt(0) & E.lt(V)
-    L = {k: rl.fz0_panel(y1, *A[k], M, 0.05) for k in ("mixeq_chr_N1ret", "fhs_loghar_cal", "rm", "garch_t")}
+    L = {k: rl.fz0_panel(y1, *A[k], M, 0.05) for k in ("mixeq_chr_N1ret", "fhs_loghar", "rm", "garch_t")}
     res["U1"] = claims("U1", L, delta.get("U1"), S)
     # U2/U3 on one universe: eligible, R5 finite, all inputs finite
     R5 = ra.forward_simple_return(ret, steps)
     rf = D["bench"]["rf"].reindex(cal)
     rf5 = np.expm1(sum(np.log1p(rf.shift(-h)) for h in steps))
-    U = D["eligible"] & ine & R5.notna() & A["ewma"].gt(0) & A["garch"].gt(0)
-    for k in ("fac_chr", "fac_chr_cal", "fac_ewma_cal", "fac_loghar_cal"):
-        U &= A[k][1].notna()
+    U = D["eligible"] & ine & R5.notna() & A["ewma"].gt(0) & A["garch"].gt(0) & A["mixeq_chr_N4rv"].gt(0) & A["fac_chr"][1].notna()
+    U &= pd.DataFrame(np.repeat(A["port_loghar"].gt(0).to_numpy()[:, None], U.shape[1], 1), U.index, U.columns)
     dates = U.index[U.sum(axis=1) >= 10]
     ec = al.ewma_corr(ret)
     corr = {d: pd.DataFrame(C, index=ec["cols"], columns=ec["cols"]) for d, C in ec["C"].items() if d in set(dates)}
     target5 = rr.VT_TARGET_ANNUAL * np.sqrt(5 / 252)
-    drd = ra.portfolio_paths({"ewma": A["ewma"], "garch": A["garch"]}, corr, R5, rf5, U, dates, target5)
-    fac = ra.n5_portfolio_paths({k: A[k] for k in ("fac_chr", "fac_chr_cal", "fac_ewma_cal", "fac_loghar_cal")}, {},
+    drd = ra.portfolio_paths({k: A[k] for k in ("ewma", "garch", "mixeq_chr_N4rv")}, corr, R5, rf5, U, dates, target5)
+    fac = ra.n5_portfolio_paths({"fac_chr": A["fac_chr"]}, {"port_loghar": A["port_loghar"]},
                                 A["_beta_d"], R5, rf5, U, pd.DatetimeIndex(drd["ewma"]["gmv"].index), target5)
     common = fac["fac_chr"]["gmv"].index
     paths = {**{k: {m: s.loc[common] for m, s in v.items()} for k, v in drd.items()}, **fac}
-    res["U3"] = claims("U3", {k: paths[k]["gmv"] ** 2 for k in ("fac_chr_cal", "fac_loghar_cal", "ewma", "garch")},
-                       delta.get("U3"), S)
-    res["U2"] = claims_u2({k: paths[k]["vt"] for k in ("fac_chr", "fac_ewma_cal", "ewma", "garch")})
+    res["U3"] = claims("U3", {k: paths[k]["gmv"] ** 2 for k in ("mixeq_chr_N4rv", "ewma", "garch")}, delta.get("U3"), S)
+    res["U2"] = claims_u2({k: paths[k]["vt"] for k in ("fac_chr", "port_loghar", "ewma", "garch")})
     # U4 (as evaluate_u4, frozen arms only)
     r_f = al.futures_main_returns(al.load_long(rr.FUT_10M, tickers=["MX"], end=cal.max()), cal)["MX"]
     R5s, R5f = R5, ra.forward_simple_return(r_f.to_frame(), steps).iloc[:, 0]
     rho = ra.ewma_corr_with(ret, r_f)
-    Hh = ra.hedge_ratios({k: A[k] for k in ("mixeq_chr_N4rv_cal", "ewma", "garch")}, rho, al.vol_ewma(r_f.to_frame(), 5).iloc[:, 0])
+    Hh = ra.hedge_ratios({k: A[k] for k in ("mixeq_chr_Z3_cal", "ewma", "garch")}, rho, al.vol_ewma(r_f.to_frame(), 5).iloc[:, 0])
     Hh["ols_beta"] = al.trailing_betas(ret, r_f, 250, 120)
     U4 = (D["eligible"] & ine & R5s.notna()).mul(R5f.notna(), axis=0).astype(bool)
     for h in Hh.values():
@@ -176,6 +175,7 @@ def claims(use: str, L: dict, delta, S) -> dict:
     c, b, (r1, r2) = f["C"], f["B"], f["refs"]
     out = {"n_dates": int(len(L[c])), "mean_loss": {k: float(v.mean()) for k, v in L.items()},
            "L1_vs_" + r1: dm(L[c], L[r1]), "L1_vs_" + r2: dm(L[c], L[r2]), "L2_vs_B": dm(L[c], L[b])}
+    # U3: the best classical arm is EWMA itself, so L2 coincides with the EWMA leg of L1
     out["L1_p"] = max(out["L1_vs_" + r1]["p"], out["L1_vs_" + r2]["p"])          # intersection-union
     if delta is not None:
         out["NI"] = ni_test((L[c] - L[b]).dropna(), delta)
@@ -230,6 +230,11 @@ def stage_sources():
         if not f.exists():
             cs.generate_multivariate(pipe, cs.rv_panels(D["ret"], D["rv"], block=block), D["eligible"], anchors,
                                      ctx=ctx, H=H, stride=stride, cross_learning=True, out_path=f, holdout_unlock=True)
+    fz = holdout_source_path("Z3")
+    if not fz.exists():                                                  # Z3: as alpha_run.stage_rvtarget "xl"
+        fz.parent.mkdir(parents=True, exist_ok=True)
+        al.generate_forecasts(pipe, np.log(D["rv"].clip(lower=0) + cs.RV_EPS), D["eligible"], anchors, ctx=250, H=5,
+                              anchors_per_call=1, cross_learning=True, out_path=fz, holdout_unlock=True)
     S5 = rr.n5_series_from_panel(D)
     for name, (rv, elig) in {"N5m": (S5["mkt_rv"], S5["mkt_rv"].notna()),
                              "N5e": (S5["resid_rv"], D["eligible"] & S5["resid_rv"].notna())}.items():
