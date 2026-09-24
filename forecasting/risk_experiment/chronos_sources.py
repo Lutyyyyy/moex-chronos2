@@ -76,6 +76,8 @@ def generate_multivariate(pipeline, panels: dict[str, pd.DataFrame], eligible: p
         raise AssertionError(f"holdout locked: anchor {anchors.max().date()} >= {al.HOLDOUT_START.date()}")
     qcols = [f"q{q:g}" for q in quantiles]
     partial = Path(str(out_path) + ".partial.parquet") if out_path else None
+    if out_path is not None:
+        Path(out_path).parent.mkdir(parents=True, exist_ok=True)   # checkpoints are written mid-run
     done = []
     if partial is not None and partial.exists():
         prev = pd.read_parquet(partial)

@@ -97,3 +97,13 @@ def test_holdout_lock():
     elig2 = pd.concat([elig, pd.DataFrame(True, late, elig.columns)])
     with pytest.raises(AssertionError):
         cs.generate_multivariate(FakePipe(), P, elig2, late, ctx=250, H=5, progress=False)
+
+
+def test_checkpoint_into_new_directory(tmp_path):
+    ret, rv, elig = _panels()
+    P = cs.rv_panels(ret, rv)
+    f = tmp_path / "new" / "dir" / "preds.parquet"
+    out = cs.generate_multivariate(FakePipe(), P, elig, ret.index[300:304], ctx=250, H=5, checkpoint_every=2,
+                                   out_path=f, progress=False)
+    assert f.exists() and not (f.parent / "preds.parquet.partial.parquet").exists()
+    assert out["anchor"].nunique() == 4
