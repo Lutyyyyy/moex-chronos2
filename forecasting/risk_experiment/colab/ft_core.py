@@ -6,7 +6,8 @@ Protocol (fixed before any fine-tuned result is seen)
   Both are forecast with cross_learning=True, context 250 and H=5, like their zero-shot twins Z3 and N1,
   so the comparison isolates fine-tuning.
 - Causal yearly refits: the model for year y is trained only on data <= Dec 31 of y-1
-  (dev: 2021..2024; holdout: 2025, 2026).
+  (dev: 2022..2024; holdout: 2025, 2026). No 2021 fold: the data start on 2020-01-03, so before its
+  training end (2020-10-06) no series reaches CTX+H observations (plan deviation E4, approved).
 - Inner validation: the last VAL_DAYS trading days before the cutoff are held out of training. Validation
   series end every VAL_STRIDE days inside that block (target windows end <= cutoff). The Trainer evaluates
   every 100 steps and keeps the best checkpoint (load_best_model_at_end).
@@ -35,7 +36,7 @@ CTX, H = 250, 5
 LR_GRID = (1e-5, 3e-5, 1e-4)
 NUM_STEPS = 1000
 VAL_DAYS, VAL_STRIDE = 60, 5
-FOLDS = {"dev": {2021: "2020-12-31", 2022: "2021-12-31", 2023: "2022-12-31", 2024: "2023-12-31"},
+FOLDS = {"dev": {2022: "2021-12-31", 2023: "2022-12-31", 2024: "2023-12-31"},
          "holdout": {2025: "2024-12-31", 2026: "2025-12-31"}}
 
 
@@ -127,6 +128,9 @@ def run_fold(pipe, panels: dict, eligible: pd.DataFrame, target: str, year: int,
     P = {v: panels[v] for v in variates}
     tr, tr_info = training_inputs(P, cutoff, variates)
     va, va_info = validation_inputs(P, cutoff, variates)
+    if not tr or not va:
+        raise ValueError(f"{target} {year}: {len(tr)} training / {len(va)} validation series before {cutoff} "
+                         f"(each needs >= {CTX + H} observations); this fold cannot be fine-tuned")
     if check_lora:
         assert_lora_available()
     rec = {"target": target, "year": year, "cutoff": cutoff, **tr_info, **va_info, "n_train_series": len(tr), "runs": []}

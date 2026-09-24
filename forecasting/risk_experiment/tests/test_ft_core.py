@@ -100,6 +100,18 @@ def test_run_fold_guards(tmp_path):
         fc.run_fold(FakePipe(), P, elig, "F1", 2022, "2022-03-31", tmp_path, check_lora=False)
 
 
+def test_fold_without_enough_history_fails_before_training(tmp_path):
+    P, elig = _panels()
+    pipe = FakePipe()
+    with pytest.raises(ValueError, match="cannot be fine-tuned"):
+        fc.run_fold(pipe, P, elig, "F1", 2020, "2019-12-31", tmp_path, check_lora=False)
+    assert pipe.fits == []
+
+
+def test_dev_folds_start_in_2022():
+    assert list(fc.FOLDS["dev"]) == [2022, 2023, 2024]
+
+
 def test_refuses_non_lora_model(tmp_path, monkeypatch):
     P, elig = _panels()
     pipe = FakePipe()
