@@ -1,0 +1,101 @@
+{
+ "dev_calendar": [
+  "2020-01-03",
+  "2024-12-30",
+  1249
+ ],
+ "full_calendar": [
+  "2020-01-03",
+  "2026-09-17",
+  1683
+ ],
+ "overlap_missing_dates": 0,
+ "overlap_extra_dates": 0,
+ "overlap_ret_max_abs_diff": 1.7763568394002505e-15,
+ "overlap_ret_nan_mismatch": 0,
+ "overlap_rv_max_abs_diff": 7.771561172376096e-16,
+ "overlap_rv_nan_mismatch": 0,
+ "overlap_eligible_mismatch": 0,
+ "new_names_in_full_panel": [
+  "CNRU",
+  "DOMRF",
+  "RAGR",
+  "X5"
+ ],
+ "holdout_days": 434,
+ "holdout_weekend_days": [
+  "2025-11-01"
+ ],
+ "holdout_eligible_per_day": {
+  "min": 69,
+  "median": 74.0,
+  "max": 78
+ },
+ "largest_holdout_moves": [
+  {
+   "date": "2026-07-20",
+   "ticker": "EUTR",
+   "log_ret": 0.637,
+   "persistence_5d": 0.77,
+   "value_vs_20d_median": 11.0,
+   "raw_1d_close_vs_main_close": 0.0
+  },
+  {
+   "date": "2026-04-13",
+   "ticker": "CBOM",
+   "log_ret": 0.456,
+   "persistence_5d": 0.84,
+   "value_vs_20d_median": 114.0,
+   "raw_1d_close_vs_main_close": -0.027
+  },
+  {
+   "date": "2026-07-20",
+   "ticker": "SFIN",
+   "log_ret": 0.327,
+   "persistence_5d": 1.52,
+   "value_vs_20d_median": 14.8,
+   "raw_1d_close_vs_main_close": -0.027
+  },
+  {
+   "date": "2025-09-30",
+   "ticker": "MVID",
+   "log_ret": 0.305,
+   "persistence_5d": 0.35,
+   "value_vs_20d_median": 72.3,
+   "raw_1d_close_vs_main_close": -0.033
+  },
+  {
+   "date": "2026-07-24",
+   "ticker": "RAGR",
+   "log_ret": 0.303,
+   "persistence_5d": 1.23,
+   "value_vs_20d_median": 15.5,
+   "raw_1d_close_vs_main_close": 0.021
+  },
+  {
+   "date": "2026-07-08",
+   "ticker": "PLZL",
+   "log_ret": -0.275,
+   "persistence_5d": 1.57,
+   "value_vs_20d_median": 14.3,
+   "raw_1d_close_vs_main_close": -0.003
+  },
+  {
+   "date": "2026-04-22",
+   "ticker": "EUTR",
+   "log_ret": 0.273,
+   "persistence_5d": 0.72,
+   "value_vs_20d_median": 34.7,
+   "raw_1d_close_vs_main_close": 0.006
+  },
+  {
+   "date": "2025-09-22",
+   "ticker": "MVID",
+   "log_ret": -0.271,
+   "persistence_5d": 1.14,
+   "value_vs_20d_median": 83.6,
+   "raw_1d_close_vs_main_close": 0.005
+  }
+ ],
+ "largest_moves_flagged": []
+}

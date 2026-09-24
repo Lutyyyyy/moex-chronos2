@@ -1,0 +1,25 @@
+{
+ "measure": "IMOEX log realized variance (main-session 10m + overnight)",
+ "window": 5,
+ "lookback": 250,
+ "min_periods": 120,
+ "pct": 0.91,
+ "target_freq": 0.125,
+ "dev_freq": 0.1261,
+ "first_valid": "2020-07-07",
+ "dev_stress_days_by_year": {
+  "2021": 23,
+  "2022": 45,
+  "2023": 0,
+  "2024": 58
+ },
+ "feb_apr_2022_share_stress": 0.556,
+ "holdout_stress_days": 52,
+ "holdout_days": 434,
+ "holdout_stress_days_by_year": {
+  "2025": 20,
+  "2026": 32
+ },
+ "min_holdout_stress_days": 40,
+ "stress_claims_possible": true
+}

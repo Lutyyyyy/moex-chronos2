@@ -185,7 +185,9 @@ def n5_portfolio_paths(fac_arms: dict, port_arms: dict, beta: pd.DataFrame, R5: 
     fac_arms  {arm: (σ²_m Series, σ²_ε DataFrame)} -> GMV on the one-factor Σ and vol targeting of the
               equal-weight book with σ²_p = w'Σw;
     port_arms {arm: σ²_p Series} -> vol targeting with the direct portfolio-variance forecast.
-    A date is kept only if every arm is finite for every name in the universe that day."""
+    A date is kept only if every arm is finite for every name in the universe that day.
+    No GMV sharing between raw and `_cal` arms here (unlike portfolio_paths): the calibration scales the
+    market and residual components by two different factors, so Σ_cal is not a multiple of Σ_raw."""
     out = {**{k: {"gmv": [], "vt": [], "vt_exposure": []} for k in fac_arms},
            **{k: {"vt": [], "vt_exposure": []} for k in port_arms}}
     kept = []

@@ -69,18 +69,19 @@ def sample_from_quantiles(Q: np.ndarray, u: Sequence[float], rng: np.random.Gene
 
 def fz0_loss(y, var, es, alpha: float) -> np.ndarray:
     """FZ0 joint VaR/ES loss (Patton, Ziegel & Chen 2019), left tail, ES < 0. Strictly consistent:
-    minimized in expectation by the true (VaR_α, ES_α). NaN where ES >= 0 or inputs are missing."""
+    minimized in expectation by the true (VaR_α, ES_α). NaN unless ES < VaR < 0 (the model's validity
+    domain) or where inputs are missing."""
     y, var, es = (np.asarray(x, dtype=float) for x in (y, var, es))
     hit = (y <= var).astype(float)
     with np.errstate(divide="ignore", invalid="ignore"):
         L = -hit * (var - y) / (alpha * es) + var / es + np.log(-es) - 1.0
-    return np.where(es < 0, L, np.nan)
+    return np.where((es < var) & (var < 0), L, np.nan)
 
 
 def fz0_panel(y: pd.DataFrame, var: pd.DataFrame, es: pd.DataFrame, mask: pd.DataFrame, alpha: float) -> pd.Series:
     """Per-date cross-sectional mean FZ0 loss over masked names (time series for DM / GW tests)."""
     v, e = var.reindex_like(y), es.reindex_like(y)
-    ok = mask.reindex_like(y).fillna(False).astype(bool) & y.notna() & v.notna() & e.lt(0)
+    ok = mask.reindex_like(y).fillna(False).astype(bool) & y.notna() & v.lt(0) & e.lt(v)
     L = pd.DataFrame(fz0_loss(y.to_numpy(), v.to_numpy(), e.to_numpy(), alpha), y.index, y.columns)
     return L.where(ok).mean(axis=1).dropna()
 

@@ -60,6 +60,8 @@ def test_fz0_minimized_by_true_var_es():
     for k in (0.8, 1.2):
         assert base < np.nanmean(rl.fz0_loss(y, np.full_like(y, k * q), np.full_like(y, k * es), a))
     assert np.isnan(rl.fz0_loss(np.array([0.0]), np.array([-0.01]), np.array([0.01]), a)[0])   # ES >= 0 invalid
+    assert np.isnan(rl.fz0_loss(np.array([0.0]), np.array([0.01]), np.array([-0.02]), a)[0])   # VaR >= 0 invalid
+    assert np.isnan(rl.fz0_loss(np.array([0.0]), np.array([-0.03]), np.array([-0.02]), a)[0])  # ES above VaR invalid
 
 
 def test_kupiec_and_christoffersen():

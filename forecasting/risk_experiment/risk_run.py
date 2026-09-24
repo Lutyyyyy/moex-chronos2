@@ -475,7 +475,9 @@ def _same_universe(full: pd.DataFrame, old: pd.DataFrame, what: str):
         raise ValueError(f"{what}: new arms would drop {lost} (date, name) cells from the existing universe")
 
 
-def evaluate_u1(arms: dict, D, S, mask1, new: set | None = None, tag: str = "R4_dev") -> pd.DataFrame:
+def evaluate_u1(arms: dict, D, S, mask1, new: set | None = None, tag: str = "R4_dev", ledger: bool = True) -> pd.DataFrame:
+    """Every arm is scored on the same cells: those where ALL arms give a valid pair ES < VaR < 0 (the FZ0
+    domain). `ledger=False` re-scores without logging trials (corrections, not new trials)."""
     y1 = D["ret"].shift(-1)
     rows = {}
     for alpha in (0.05, 0.01):
@@ -484,9 +486,9 @@ def evaluate_u1(arms: dict, D, S, mask1, new: set | None = None, tag: str = "R4_
         M_old = mask1.copy()
         for k in names:
             V, E = arms[k][alpha]
-            M &= V.notna() & E.lt(0)
+            M &= V.lt(0) & E.lt(V)
             if not new or k not in new:
-                M_old &= V.notna() & E.lt(0)
+                M_old &= V.lt(0) & E.lt(V)
         if new:
             _same_universe(M, M_old, f"U1 alpha={alpha}")
         Ls = {k: rl.fz0_panel(y1, *arms[k][alpha], M, alpha) for k in names}
@@ -516,7 +518,7 @@ def evaluate_u1(arms: dict, D, S, mask1, new: set | None = None, tag: str = "R4_
                 z = pd.concat(bt)
                 r.update(basel_red_share=float((z == "red").mean()), basel_yellow_share=float((z == "yellow").mean()))
             rows[(k, alpha)] = r
-            if not new or k in new:
+            if ledger and (not new or k in new):
                 _ledger("U1", k, f"fz0_a{alpha}", r["fz0"], r["n_obs"], tag=tag)
     return pd.DataFrame(rows).T
 
