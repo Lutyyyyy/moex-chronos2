@@ -351,6 +351,7 @@ def drd_cov(var_fc: np.ndarray, corr: np.ndarray) -> np.ndarray:
 def gmv_weights(cov: np.ndarray, long_only: bool = True) -> np.ndarray:
     """Global minimum-variance weights (sum 1); long-only via SLSQP, else closed form Σ⁻¹1/(1'Σ⁻¹1)."""
     n = cov.shape[0]
+    cov = cov / np.mean(np.diag(cov))            # scale-free problem: same weights for c·Σ, well-conditioned tolerances
     ones = np.ones(n)
     w_cf = np.linalg.solve(cov, ones)
     w_cf /= w_cf.sum()
