@@ -9,6 +9,9 @@ Stages, run from the repo root as  .venv/bin/python forecasting/risk_experiment/
                and U3 (minimum-variance portfolio): pooled, calm and stress; ledger rows.
                Fine-tuned (F1/F2) arms are added when their inputs exist.
   dev_u4       U4 dev evaluation: stocks hedged with the IMOEX future MX (plan section F).
+  n5_series    build and check the N5 series only (portfolio RV, IMOEX RV, residual RV).
+  sources_n5   N5 zero-shot sources (plan F5): N5m [EWP, IMOEX] log-RV, N5e residual log-RV.
+  dev_n5       N5 dev evaluation (one-factor GMV, portfolio-vol targeting) on the U2/U3 dates.
 Later stages (bundle_dev, dev, select, holdout_sources, bundle_holdout, holdout) are added
 in R2-R7.
 """
@@ -188,6 +191,82 @@ def stage_sources_dev(threads: int = 4) -> dict:
     print(json.dumps(checks, indent=1))
     return checks
 
+N5_DIR = OUT / "n5"
+
+
+def build_n5_series(D) -> dict:
+    """Plan F5 inputs on the dev calendar: RV of the equal-weight portfolio and of IMOEX (a), and each
+    stock's residual RV after β_i(d-1)·r_IMOEX (b). β = trailing 250-day OLS beta of daily returns on
+    IMOEX, lagged one row so the residual at t uses β known at t-1. Cached under runs/risk/n5/."""
+    import n5_series as n5
+    f = {k: N5_DIR / f"{k}.parquet" for k in ("mkt_rv", "resid_rv", "beta")}
+    if all(p.exists() for p in f.values()):
+        return {k: pd.read_parquet(p) for k, p in f.items()}
+    cal = D["ret"].index
+    shares = al.load_long(ROOT / "data_pipeline/data/processed/candles_10m/shares.parquet",
+                          columns=["ticker", "timestamp", "close_adj"], end=cal.max())
+    index = al.load_long(INDEX_10M, tickers=["IMOEX"], columns=["ticker", "timestamp", "close"], end=cal.max())
+    R = n5.bar_returns(shares[shares["ticker"].isin(D["ret"].columns)], cal).reindex(columns=D["ret"].columns)
+    r_m = n5.bar_returns(index, cal, col="close")["IMOEX"]
+    beta = al.trailing_betas(D["ret"], D["bench"]["imoex_ret"], 250, 120).shift(1)
+    out = {"mkt_rv": pd.DataFrame({"EWP": n5.portfolio_rv(R, n5.ew_weights(D["eligible"])),
+                                   "IMOEX": al.realized_variance(index, cal, col="close")["IMOEX"]}).reindex(cal),
+           "resid_rv": n5.residual_rv(R, r_m, beta).reindex(index=cal, columns=D["ret"].columns),
+           "beta": beta}
+    N5_DIR.mkdir(parents=True, exist_ok=True)
+    for k, v in out.items():
+        v.to_parquet(f[k])
+    return out
+
+
+def n5_checks(D, S5) -> dict:
+    """Sanity checks of the N5 series (no forecasts involved)."""
+    rv, el = D["rv"], D["eligible"]
+    m, e = S5["mkt_rv"], S5["resid_rv"]
+    lm = np.log(m.where(m > 0))
+    ratio = (e / rv).where(el & (rv > 0))
+    return {"mkt_first_valid": {c: str(m[c].first_valid_index().date()) for c in m},
+            "corr_log_EWP_IMOEX": round(float(lm.corr().iloc[0, 1]), 4),
+            "ann_vol_EWP_IMOEX": {c: round(float(np.sqrt(m[c].mean() * 252)), 4) for c in m},
+            "resid_over_total_rv_median": round(float(np.nanmedian(ratio.to_numpy())), 4),
+            "resid_over_total_rv_p05_p95": [round(float(np.nanquantile(ratio.to_numpy(), q)), 4) for q in (0.05, 0.95)],
+            "resid_coverage_of_eligible_2021plus": round(float(e.where(el).loc["2021":].notna().sum().sum()
+                                                              / el.loc["2021":].sum().sum()), 4)}
+
+
+def stage_sources_n5(threads: int = 4, series_only: bool = False) -> dict:
+    """N5 zero-shot sources with the Z3 configuration (log-RV, cross-learning, ctx 250, H 5):
+    N5m on [EWP, IMOEX] log-RV and N5e on the residual log-RV of eligible stocks. Holdout locked."""
+    D = load_panel(DEV_PANEL, ("ret", "rv", "eligible", "bench"))
+    S5 = build_n5_series(D)
+    checks = n5_checks(D, S5)
+    print(json.dumps(checks, indent=1), flush=True)
+    if series_only:
+        return checks
+    import torch
+    torch.set_num_threads(threads)
+    import alpha_run as R
+    cal = D["ret"].index
+    anchors = cal[cal >= pd.Timestamp(FIRST_ANCHOR)]
+    jobs = {"N5m": (S5["mkt_rv"], S5["mkt_rv"].notna()),
+            "N5e": (S5["resid_rv"], D["eligible"] & S5["resid_rv"].notna())}
+    pipe = None
+    for name, (rv, elig) in jobs.items():
+        f = source_path(name)
+        if not f.exists():
+            pipe = pipe or R.load_pipeline()
+            P = {"logrv": cs.rv_panels(rv * 0, rv)["logrv"]}
+            cs.generate_multivariate(pipe, P, elig, anchors, ctx=250, H=5, cross_learning=True, out_path=f)
+            print(f"[{name}] done", flush=True)
+        p = pd.read_parquet(f)
+        checks[name] = {"rows": len(p), "anchors": int(p["anchor"].nunique()), "max_anchor": str(pd.Timestamp(p["anchor"].max()).date()),
+                        "anchor_ticker_pairs": int(p[["anchor", "ticker"]].drop_duplicates().shape[0]),
+                        "eligible_pairs": int(elig.reindex(anchors).sum().sum())}
+    (N5_DIR / "checks.json").write_text(json.dumps(checks, indent=1))
+    print(json.dumps(checks, indent=1))
+    return checks
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # Stage dev (R4)
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -323,8 +402,8 @@ def build_vol_arms(D, S, mask5) -> dict:
     return arms
 
 
-def _ledger(use: str, arm: str, metric: str, value: float, n: int):
-    al.append_trial(LEDGER, use=use, tag="R4_dev", period="dev_2021_2024", arm=arm, metric=metric,
+def _ledger(use: str, arm: str, metric: str, value: float, n: int, tag: str = "R4_dev"):
+    al.append_trial(LEDGER, use=use, tag=tag, period="dev_2021_2024", arm=arm, metric=metric,
                     value=float(value), n=int(n))
 
 
@@ -484,6 +563,125 @@ def stage_dev_u4() -> pd.DataFrame:
     return t4
 
 
+def build_n5_arms(D, S5, mask5) -> tuple:
+    """N5 forecasts (5-day variances) for Chronos and two classical twins on the same series:
+    fac  {arm: (σ²_m IMOEX, σ²_ε residual panel)} for the one-factor Σ;
+    port {arm: σ²_p of the equal-weight portfolio}.
+    Twins: log-HAR on the same RV series (pooled + market terms for residuals, like loghar_pooled_mkt)
+    and EWMA (λ=0.94) of daily returns. `_cal` = rolling level scale to realized 5-day squared returns,
+    per component (market, residuals, portfolio); see the F-notes on the 10m Epps bias."""
+    ret, el, cal = D["ret"], D["eligible"], D["ret"].index
+    steps = (1, 2, 3, 4, 5)
+    m_ret = D["bench"]["imoex_ret"].reindex(cal)
+    eps = ret.sub(S5["beta"].mul(m_ret, axis=0))                        # residual daily return, β known at t-1
+    ewp = (ret.fillna(0) * el.astype(float).div(el.sum(axis=1), axis=0)).sum(axis=1).where(el.any(axis=1))
+    fwd = lambda x: sum(x.shift(-h) for h in steps) ** 2                 # noqa: E731
+    Pm, Pe = pd.read_parquet(source_path("N5m")), pd.read_parquet(source_path("N5e"))
+    mk = S5["mkt_rv"]
+    s2m = {"chr": ra.chronos_rv(Pm, steps, cal, ["EWP", "IMOEX"])["IMOEX"],
+           "loghar": al.vol_har_log(mk[["IMOEX"]], steps)["IMOEX"],
+           "ewma": al.vol_ewma(m_ret.to_frame(), 5).iloc[:, 0]}
+    s2p = {"chr": ra.chronos_rv(Pm, steps, cal, ["EWP", "IMOEX"])["EWP"],
+           "loghar": al.vol_har_log(mk[["EWP"]], steps)["EWP"],
+           "ewma": al.vol_ewma(ewp.to_frame(), 5).iloc[:, 0]}
+    s2e = {"chr": ra.chronos_rv(Pe, steps, cal, list(ret.columns)),
+           "loghar": _cached("n5_loghar_resid", lambda: al.vol_har_log(S5["resid_rv"], steps, mask=el, pooled=True, market=True)),
+           "ewma": al.vol_ewma(eps, 5)}
+    in_dev = mask5.any(axis=1)
+    fac, port = {}, {}
+    def scale1(var_fc, x):
+        """Single-series level scale: rolling MEAN of r²/σ² over realized windows. (alpha_lib's median of
+        a cross-sectional mean is fine for the stock panel, but for one series the median of a χ²-like
+        ratio is ≈0.45× its mean and would understate the variance about 2×.)"""
+        ratio = (fwd(x) / var_fc).where(in_dev & var_fc.gt(0))
+        return ratio.shift(5).rolling(250, min_periods=60).mean()
+    for k in ("chr", "loghar", "ewma"):
+        cm = scale1(s2m[k], m_ret)
+        ce = al.rolling_vol_scale(s2e[k], fwd(eps), mask5, horizon=5)
+        cp = scale1(s2p[k], ewp)
+        fac[f"fac_{k}"] = (s2m[k], s2e[k])
+        fac[f"fac_{k}_cal"] = (s2m[k] * cm, s2e[k].mul(ce, axis=0))
+        port[f"port_{k}"] = s2p[k]
+        port[f"port_{k}_cal"] = s2p[k] * cp
+    return fac, port
+
+
+def stage_dev_n5() -> pd.DataFrame:
+    """N5 dev evaluation on the U2/U3 dates and universe. Compared with the D·R·D arms (cached paths)
+    on the common dates; the classical twins join the classical sets (stricter L2)."""
+    D = load_panel(DEV_PANEL, ("ret", "rv", "eligible", "bench"))
+    cal = D["ret"].index
+    S = pd.read_csv(OUT / "stress.csv", index_col=0, parse_dates=True)["stress"].reindex(cal)
+    in_dev = pd.DataFrame(np.repeat(cal.isin(span(cal, DEV))[:, None], D["ret"].shape[1], 1), cal, D["ret"].columns)
+    mask5 = D["eligible"] & in_dev
+    va = build_vol_arms(D, S, mask5)
+    steps = (1, 2, 3, 4, 5)
+    R5 = ra.forward_simple_return(D["ret"], steps)
+    rf = D["bench"]["rf"].reindex(cal)
+    rf5 = np.expm1(sum(np.log1p(rf.shift(-h)) for h in steps))
+    U = mask5 & R5.notna()                                              # the exact U2/U3 universe (evaluate_vol)
+    for v in va.values():
+        U &= v.gt(0)
+    Pc = pd.read_parquet(OUT / "dev" / "cache" / "portfolio_paths.parquet")
+    dates = Pc.index
+    S5 = build_n5_series(D)
+    fac, port = build_n5_arms(D, S5, mask5)
+    beta_d = al.trailing_betas(D["ret"], D["bench"]["imoex_ret"], 250, 120)   # loading known at d
+    target5 = VT_TARGET_ANNUAL * np.sqrt(5 / 252)
+    fp = OUT / "dev" / "cache" / "n5_paths.parquet"
+    if fp.exists():
+        Pn = pd.read_parquet(fp)
+    else:
+        paths = ra.n5_portfolio_paths(fac, port, beta_d, R5, rf5, U, dates, target5)
+        Pn = pd.concat({k: pd.DataFrame(v) for k, v in paths.items()}, axis=1)
+        Pn.to_parquet(fp)
+    common = Pn.index
+    print(f"N5 dates kept: {len(common)} of {len(dates)} U3 dates", flush=True)
+    allp = pd.concat([Pc.loc[common], Pn], axis=1)
+    arms = list(allp.columns.levels[0])
+    has_gmv = [k for k in arms if (k, "gmv") in allp.columns]
+    cl_extra = {"fac_loghar", "fac_ewma", "port_loghar", "port_ewma"}
+    is_cl = lambda k: k.split("_cal")[0] in CLASSICAL_VOL or k.split("_cal")[0] in cl_extra   # noqa: E731
+    gl = {k: allp[(k, "gmv")] ** 2 for k in has_gmv}
+    best_gmv = min([k for k in has_gmv if is_cl(k)], key=lambda k: gl[k].mean())
+    vt = {k: allp[(k, "vt")] for k in arms}
+    fee = {k: rl.fko_performance_fee(vt[k], vt["ewma"], 5, 252 / 5)["fee_bps_annual"] for k in arms}
+    best_vt = max([k for k in arms if is_cl(k) and k != "ewma"], key=lambda k: fee[k])
+    s = S.reindex(common)
+    new = set(Pn.columns.levels[0])
+    rows = {}
+    for k in arms:
+        r = {"new_N5": k in new, "vt_ann_vol": float(np.sqrt((vt[k] ** 2).mean() * 252 / 5)),
+             "vt_mean_exposure": float(allp[(k, "vt_exposure")].mean()), "vt_fee_bps_vs_ewma": fee[k],
+             "n_dates": len(common), "best_classical_gmv": best_gmv, "best_classical_vt": best_vt}
+        if k in gl:
+            L = gl[k]
+            r.update(gmv_ann_vol=float(np.sqrt(L.mean() * 252 / 5)), gmv_ann_vol_calm=float(np.sqrt(L[s == 0].mean() * 252 / 5)),
+                     gmv_ann_vol_stress=float(np.sqrt(L[s == 1].mean() * 252 / 5)))
+            for ref, lab in (("ewma", "ewma"), ("garch", "garch"), (best_gmv, "best_classical")):
+                if k != ref:
+                    r[f"gmv_dm_t_vs_{lab}"] = al.dm_test(L, gl[ref], NW)["t"]
+            if k != best_gmv:
+                g = rl.giacomini_white(L, gl[best_gmv], pd.DataFrame({"const": 1.0, "stress": s.fillna(0)}), NW)
+                r.update(gmv_gw_p=g["p"], gmv_gw_stress_t=g["coefs"].loc["stress", "t"])
+        if k in new:
+            for ref, lab in (("ewma", "ewma"), (best_vt, "best_classical")):
+                if k != ref:
+                    fb = rl.fko_fee_bootstrap(vt[k], vt[ref], 5, 252 / 5, n_boot=500)
+                    r[f"vt_fee_bps_vs_{lab}"], r[f"vt_fee_p_vs_{lab}"] = fb["fee_bps_annual"], fb["p_one_sided"]
+            if k in gl:
+                _ledger("U3", k, "gmv_realized_var", gl[k].mean(), len(common), tag="R4_dev_N5")
+            _ledger("U2", k, "vt_fee_bps_vs_ewma", fee[k], len(common), tag="R4_dev_N5")
+        rows[k] = r
+    t = pd.DataFrame(rows).T
+    t.to_csv(OUT / "dev" / "U23_n5_table.csv")
+    pd.set_option("display.width", 250); pd.set_option("display.max_columns", 40)
+    c = ["new_N5", "gmv_ann_vol", "gmv_ann_vol_calm", "gmv_ann_vol_stress", "gmv_dm_t_vs_ewma", "gmv_dm_t_vs_best_classical", "gmv_gw_p",
+         "vt_ann_vol", "vt_mean_exposure", "vt_fee_bps_vs_ewma", "vt_fee_bps_vs_best_classical", "vt_fee_p_vs_best_classical"]
+    print(t[[x for x in c if x in t.columns]].sort_values("gmv_ann_vol").to_string())
+    return t
+
+
 def stage_dev() -> dict:
     D = load_panel(DEV_PANEL, ("ret", "rv", "eligible", "bench"))
     cal = D["ret"].index
@@ -515,4 +713,5 @@ def stage_dev() -> dict:
 
 if __name__ == "__main__" and len(sys.argv) > 1:
     {"holdout_qa": stage_holdout_qa, "regime": stage_regime, "sources_dev": stage_sources_dev,
-     "dev": stage_dev, "dev_u4": stage_dev_u4}[sys.argv[1]]()
+     "dev": stage_dev, "dev_u4": stage_dev_u4, "sources_n5": stage_sources_n5,
+     "n5_series": lambda: stage_sources_n5(series_only=True), "dev_n5": stage_dev_n5}[sys.argv[1]]()

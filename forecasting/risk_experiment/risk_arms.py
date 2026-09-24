@@ -173,6 +173,48 @@ def portfolio_paths(var_arms: dict, corr: dict, R5: pd.DataFrame, rf5: pd.Series
     return {k: {m: pd.Series(v, index=idx) for m, v in d_.items()} for k, d_ in out.items()}
 
 
+def factor_cov(beta: np.ndarray, s2m: float, s2e: np.ndarray) -> np.ndarray:
+    """One-factor covariance Σ = β β' σ²_m + diag(σ²_ε) (plan F5b)."""
+    beta = np.asarray(beta, dtype=float)
+    return np.outer(beta, beta) * s2m + np.diag(np.asarray(s2e, dtype=float))
+
+
+def n5_portfolio_paths(fac_arms: dict, port_arms: dict, beta: pd.DataFrame, R5: pd.DataFrame, rf5: pd.Series,
+                       universe: pd.DataFrame, dates: pd.DatetimeIndex, target5: float, cap: float = 2.0) -> dict:
+    """N5 arms on given dates/names (the U2/U3 universe, so results compare with the D·R·D arms):
+    fac_arms  {arm: (σ²_m Series, σ²_ε DataFrame)} -> GMV on the one-factor Σ and vol targeting of the
+              equal-weight book with σ²_p = w'Σw;
+    port_arms {arm: σ²_p Series} -> vol targeting with the direct portfolio-variance forecast.
+    A date is kept only if every arm is finite for every name in the universe that day."""
+    out = {**{k: {"gmv": [], "vt": [], "vt_exposure": []} for k in fac_arms},
+           **{k: {"vt": [], "vt_exposure": []} for k in port_arms}}
+    kept = []
+    for d in dates:
+        names = universe.columns[universe.loc[d].to_numpy(dtype=bool)]
+        b = beta.loc[d, names].to_numpy()
+        covs = {k: factor_cov(b, m.loc[d], e.loc[d, names].to_numpy()) for k, (m, e) in fac_arms.items()}
+        sp2 = {k: float(v.loc[d]) for k, v in port_arms.items()}
+        if len(names) < 10 or not all(np.isfinite(c).all() for c in covs.values()) or not all(np.isfinite(v) and v > 0 for v in sp2.values()):
+            continue
+        kept.append(d)
+        r5 = R5.loc[d, names].to_numpy()
+        w_ew = np.full(len(names), 1 / len(names))
+        ew5 = float(w_ew @ r5)
+
+        def vt(k, var_p):
+            e = min(target5 / np.sqrt(var_p), cap)
+            out[k]["vt"].append(float(e * ew5 + (1 - e) * rf5.loc[d])); out[k]["vt_exposure"].append(e)
+        for k, cov in covs.items():
+            out[k]["gmv"].append(float(rl.gmv_weights(cov) @ r5))
+            vt(k, float(w_ew @ cov @ w_ew))
+        for k, v in sp2.items():
+            vt(k, v)
+    if not kept:
+        raise ValueError("n5_portfolio_paths: no usable dates")
+    idx = pd.DatetimeIndex(kept)
+    return {k: {m: pd.Series(v, index=idx) for m, v in d_.items()} for k, d_ in out.items()}
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # Hedging (U4): single stocks hedged with the index future
 # ═══════════════════════════════════════════════════════════════════════════════

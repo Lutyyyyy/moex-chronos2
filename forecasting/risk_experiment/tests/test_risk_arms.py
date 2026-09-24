@@ -98,6 +98,23 @@ def test_hedge_ratio_recovers_beta_and_is_level_sensitive():
     assert e_true < e_bad and e_true < R_s.var().iat[0]
 
 
+def test_factor_cov_and_n5_paths():
+    b = np.array([1.0, 0.5]); C = ra.factor_cov(b, 0.04, np.array([0.01, 0.02]))
+    assert np.allclose(C, [[0.05, 0.02], [0.02, 0.03]])
+    rng = np.random.default_rng(5)
+    dates = pd.bdate_range("2022-01-03", periods=20); cols = [f"S{i}" for i in range(12)]
+    beta = pd.DataFrame(rng.uniform(0.5, 1.5, (20, 12)), dates, cols)
+    s2m = pd.Series(0.002, dates); s2e = pd.DataFrame(0.001, dates, cols)
+    R5 = pd.DataFrame(rng.normal(0, 0.03, (20, 12)), dates, cols)
+    U = pd.DataFrame(True, dates, cols)
+    s2e_bad = s2e.copy(); s2e_bad.iloc[3, 2] = np.nan               # one missing name drops that date for all arms
+    P = ra.n5_portfolio_paths({"f": (s2m, s2e), "g": (s2m, s2e_bad)}, {"p": s2m * 0.8}, beta, R5, pd.Series(0.0, dates), U, dates, 0.02)
+    assert len(P["f"]["gmv"]) == 19 and dates[3] not in P["p"]["vt"].index
+    w = np.full(12, 1 / 12); d = dates[0]
+    sp = np.sqrt(w @ ra.factor_cov(beta.loc[d].to_numpy(), 0.002, np.full(12, 0.001)) @ w)
+    assert P["f"]["vt_exposure"].iloc[0] == pytest.approx(min(0.02 / sp, 2.0))
+
+
 def test_portfolio_paths_fails_loudly_without_dates():
     dates = pd.bdate_range("2022-01-03", periods=5); cols = [f"S{i}" for i in range(12)]
     V = pd.DataFrame(1e-3, dates, cols)
