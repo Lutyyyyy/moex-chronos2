@@ -147,6 +147,32 @@ A second data audit, prompted by review of the v1 results, found two real bugs. 
 - A corrected-data re-run of the same frozen pipeline has **not** been run yet. It will re-use 2024, and must be reported as such.
 - The rebuilt `close_adj` also changes the inputs of every earlier experiment in `FINDINGS.md` that used `close_adj`. Their recorded results were not recomputed.
 
+### Corrected-data re-run of the frozen v1 pipeline (2026-09-24): **same verdict**
+
+Code, gate, selection rules and thresholds are identical to the pre-registration. Only the two data bugs above were fixed.
+- **Forecasts:** 999 anchors and 353,772 rows, all present. One row had crossing quantiles (v1 had 9, all GAZP around the spurious dividend spike).
+- **Primaries:** the frozen rules re-selected the same ones, `MED_SIG` and `lowvol_factor` (dev DSR 0.924 and ≈0, N=4 each).
+- **Disclosure:** this **re-uses 2024**. It is reported as a data-corrected replication, not as a fresh test. Outputs are in `forecasting/runs/alpha_{dev,test}/`; v1 is kept in `*_v1/`. Ledger tags: `v1c_dev`, `v1c_test`.
+
+| | v1 (uncorrected) | **v1c (corrected)** |
+|---|---:|---:|
+| Dev IC (NW t) | 0.068 (5.78) | 0.069 (5.75) |
+| Dev spanning alpha t / FM t | −0.32 / 1.80 | 0.14 / 2.01 |
+| **A1** 2024 IC NW t (mean IC) | 3.54 (0.096) | **3.21** (0.088) — pass |
+| **A2** 2024 net spanning alpha t (p.a.) | −0.55 (−1.9%) | **−0.97** (−3.4%) — **FAIL** |
+| **A3** 2024 Fama-MacBeth t | 2.61 | **2.18** — pass |
+| 2024 Chronos long-short net / gross Sharpe | 1.06 / 1.82 | 0.81 / 1.58 |
+| 2024 AR(1) long-short net Sharpe | 1.16 | 1.16 |
+| Chronos turnover p.a. / cost breakeven | 26× / 25 bps | 26× / 20 bps |
+| Long-only active vs equal-weight (IR, CAPM t) | +6.4% (0.86, 0.84) | +4.1% (0.55, 0.52) |
+| **B1** DM p raw vs EWMA / GARCH; scaled vs EWMA / GARCH | 0.71 / 0.99; 1.00 / 0.049 | 0.73 / 0.98; 1.00 / 0.25 — **FAIL** |
+| **B2** bootstrap p (ΔSharpe vs EWMA twin) | 0.86 (−0.63) | 0.81 (−0.48) — **FAIL** |
+| 2024 q05 / q10 hit rate (dev) | 6.6% / 12.2% (5.0 / 10.0) | 6.7% / 12.2% (5.1 / 10.1) |
+
+**Reading.** Correcting the data made Chronos slightly *worse* relative to the baselines. The spurious dividend reversals had been a small source of apparent predictability. The conclusions stand:
+- **Track A:** real cross-sectional IC with a small incremental component (Fama-MacBeth t≈2). The net long-short book is spanned by the AR(1)/trailing-mean and low-vol books at 2.7× their turnover.
+- **Track B:** Chronos σ from daily returns is not better than EWMA or GARCH(1,1), and its tails were too narrow in 2024.
+
 ### Next
 
-The holdout (2025-01 → 2026-09) is **still sealed**. The improvement wave (plan Part 3) has not been run. It is being re-prioritized in light of these results before any of it runs.
+The holdout (2025-01 → 2026-09) is **still sealed**. The improvement wave (plan Part 3, re-prioritized: Chronos-mimic, combination, turnover control, cross_learning, residual target, RV target for Track B) runs next on 2021–2024 corrected data.

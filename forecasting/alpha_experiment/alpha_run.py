@@ -393,9 +393,12 @@ def load_preds(path=None):
     return preds
 
 
-def unique_trials(led, track, period):
-    """Distinct variants (a re-run of the same variant is not a new trial); last row wins."""
+def unique_trials(led, track, period, tag=None):
+    """Distinct variants (a re-run of the same variant is not a new trial); last row wins.
+    `tag` restricts to one run (the corrected-data re-run evaluates the same 4 variants, not new ones)."""
     t = led[(led.track == track) & (led.period == period)]
+    if tag is not None:
+        t = t[t.tag == tag]
     return t.drop_duplicates(subset=["tag", "signal", "book", "exec_lag", "cost_bps", "borrow"], keep="last")
 
 
@@ -416,7 +419,7 @@ def stage_dev(preds_path=None, out_dir=DEV_DIR, tag="v1_dev", ledger=None):
     span.to_csv(out_dir / "spanning_dev.csv"); fm.to_csv(out_dir / "fama_macbeth_dev.csv")
     # DSR at selection: all Track A Chronos trials evaluated on dev so far (ledger)
     led = pd.read_csv(LEDGER)
-    ta = unique_trials(led, "A", "dev")
+    ta = unique_trials(led, "A", "dev", tag)
     sel = pnlA[f"chronos_{primary_a}|LS"].dropna()
     ps = al.perf_stats(sel)
     dsr = al.deflated_sharpe(sel.mean() / sel.std(), len(sel), len(ta), float(ta["daily_sr"].var(ddof=1)),
@@ -436,7 +439,7 @@ def stage_dev(preds_path=None, out_dir=DEV_DIR, tag="v1_dev", ledger=None):
     B2.to_csv(out_dir / "track_b_econ_dev.csv", index=False)
     gains = B2[B2.vol_model == "chronos"].set_index("use")["net_sharpe"] - B2[B2.vol_model == "ewma"].set_index("use")["net_sharpe"]
     primary_b = gains.idxmax()
-    led = pd.read_csv(LEDGER); tb = unique_trials(led, "B", "dev")
+    led = pd.read_csv(LEDGER); tb = unique_trials(led, "B", "dev", tag)
     selb = pnlB[f"{primary_b}|chronos"].dropna(); psb = al.perf_stats(selb)
     dsr_b = al.deflated_sharpe(selb.mean() / selb.std(), len(selb), len(tb), float(tb["daily_sr"].var(ddof=1)),
                                psb["skew"], psb["kurt"])
@@ -530,8 +533,8 @@ if __name__ == "__main__" and len(sys.argv) > 1:
             scratch = Path(sys.argv[sys.argv.index("--smoke") + 1])
             stage_dev(FC_DIR / "preds_smoke.parquet", out_dir=scratch, tag="smoke", ledger=scratch / "ledger_smoke.csv")
         else:
-            stage_dev()
+            stage_dev(tag=sys.argv[sys.argv.index("--tag") + 1] + "_dev" if "--tag" in sys.argv else "v1_dev")
     elif stage == "test":
-        stage_test()
+        stage_test(tag=sys.argv[sys.argv.index("--tag") + 1] + "_test" if "--tag" in sys.argv else "v1_test")
     else:
         raise SystemExit(f"unknown stage {stage}")
