@@ -7,7 +7,8 @@ Stages, run from the repo root as  .venv/bin/python forecasting/risk_experiment/
                [return, log-RV] daily H=5; N4 the same on non-overlapping 5-day blocks, H=1.
   dev          R4 dev evaluation (2021-2024) of every arm for U1 (1-day VaR/ES), U2 (vol targeting)
                and U3 (minimum-variance portfolio): pooled, calm and stress; ledger rows.
-               Fine-tuned (F1/F2) and U4 (hedging) arms are added when their inputs exist.
+               Fine-tuned (F1/F2) arms are added when their inputs exist.
+  dev_u4       U4 dev evaluation: stocks hedged with the IMOEX future MX (plan section F).
 Later stages (bundle_dev, dev, select, holdout_sources, bundle_holdout, holdout) are added
 in R2-R7.
 """
@@ -34,6 +35,7 @@ OUT = RUNS / "risk"
 DEV = ("2021-01-01", "2024-12-31")
 HOLDOUT = ("2025-01-01", "2026-09-17")
 INDEX_10M = ROOT / "data_pipeline" / "data" / "processed" / "candles_10m" / "indices.parquet"
+FUT_10M = ROOT / "data_pipeline" / "data" / "processed" / "candles_10m" / "futures.parquet"
 
 # Regime rule (fixed in R1 from dev market data only; see stage_regime)
 STRESS_TARGET_FREQ = 0.125     # target share of dev days in stress
@@ -424,6 +426,64 @@ def evaluate_vol(arms: dict, D, S, mask5) -> tuple:
     return pd.DataFrame(rows).T, paths
 
 
+def evaluate_u4(arms: dict, D, S, mask5) -> pd.DataFrame:
+    """U4 (plan F1-F4): each eligible stock hedged over d+1..d+5 with the IMOEX future (MX),
+    h = ρ̂·σ̂_s/σ̂_f with a shared EWMA ρ̂ (λ=0.97) and EWMA σ̂_f (λ=0.94), plus the rolling 250-day
+    OLS beta as an extra classical arm. Windows containing an MX roll are dropped (same for all arms).
+    Loss = per-date cross-sectional mean of squared hedged 5-day simple returns."""
+    ret = D["ret"]
+    cal = ret.index
+    steps = (1, 2, 3, 4, 5)
+    r_f = al.futures_main_returns(al.load_long(FUT_10M, tickers=["MX"], end=cal.max()), cal)["MX"]
+    R5s = ra.forward_simple_return(ret, steps)
+    R5f = ra.forward_simple_return(r_f.to_frame(), steps).iloc[:, 0]
+    rho = ra.ewma_corr_with(ret, r_f)
+    Hh = ra.hedge_ratios(arms, rho, al.vol_ewma(r_f.to_frame(), 5).iloc[:, 0])
+    Hh["ols_beta"] = al.trailing_betas(ret, r_f, 250, 120)
+    U = mask5 & R5s.notna()
+    U = U.mul(R5f.notna(), axis=0).astype(bool)
+    for h in Hh.values():
+        U &= np.isfinite(h)
+    dates = U.index[U.sum(axis=1) >= 10]
+    U = U.loc[dates]
+    loss = {k: (ra.hedged_returns(h, R5s, R5f).loc[dates] ** 2).where(U).mean(axis=1) for k, h in Hh.items()}
+    unhedged = (R5s.loc[dates] ** 2).where(U).mean(axis=1)
+    s = S.reindex(dates)
+    classical = [k for k in Hh if k.split("_cal")[0] in CLASSICAL_VOL + ["ols_beta"]]
+    best = min(classical, key=lambda k: loss[k].mean())
+    rows = {}
+    for k, L in loss.items():
+        r = {"u4_ann_vol": float(np.sqrt(L.mean() * 252 / 5)), "u4_ann_vol_calm": float(np.sqrt(L[s == 0].mean() * 252 / 5)),
+             "u4_ann_vol_stress": float(np.sqrt(L[s == 1].mean() * 252 / 5)), "hedge_effectiveness": float(1 - L.mean() / unhedged.mean()),
+             "mean_h": float(Hh[k].loc[dates].where(U).stack().mean()), "n_dates": len(L), "n_obs": int(U.sum().sum()),
+             "unhedged_ann_vol": float(np.sqrt(unhedged.mean() * 252 / 5)), "best_classical": best}
+        for ref, lab in (("ewma", "ewma"), ("garch", "garch"), (best, "best_classical")):
+            if k != ref:
+                r[f"dm_t_vs_{lab}"] = al.dm_test(L, loss[ref], NW)["t"]
+        if k != best:
+            g = rl.giacomini_white(L, loss[best], pd.DataFrame({"const": 1.0, "stress": s.fillna(0)}), NW)
+            r.update(gw_p=g["p"], gw_stress_t=g["coefs"].loc["stress", "t"])
+        rows[k] = r
+        _ledger("U4", k, "hedged_mse", L.mean(), r["n_obs"])
+    return pd.DataFrame(rows).T
+
+
+def stage_dev_u4() -> pd.DataFrame:
+    D = load_panel(DEV_PANEL, ("ret", "rv", "eligible"))
+    cal = D["ret"].index
+    S = pd.read_csv(OUT / "stress.csv", index_col=0, parse_dates=True)["stress"].reindex(cal)
+    in_dev = pd.DataFrame(np.repeat(cal.isin(span(cal, DEV))[:, None], D["ret"].shape[1], 1), cal, D["ret"].columns)
+    mask5 = D["eligible"] & in_dev
+    t4 = evaluate_u4(build_vol_arms(D, S, mask5), D, S, mask5)
+    (OUT / "dev").mkdir(parents=True, exist_ok=True)
+    t4.to_csv(OUT / "dev" / "U4_table.csv")
+    pd.set_option("display.width", 250); pd.set_option("display.max_columns", 40)
+    c = ["u4_ann_vol", "u4_ann_vol_calm", "u4_ann_vol_stress", "hedge_effectiveness", "mean_h", "dm_t_vs_ewma", "dm_t_vs_garch",
+         "dm_t_vs_best_classical", "gw_p", "gw_stress_t"]
+    print(t4[[x for x in c if x in t4.columns]].astype(float).sort_values("u4_ann_vol").round(4).to_string())
+    return t4
+
+
 def stage_dev() -> dict:
     D = load_panel(DEV_PANEL, ("ret", "rv", "eligible", "bench"))
     cal = D["ret"].index
@@ -455,4 +515,4 @@ def stage_dev() -> dict:
 
 if __name__ == "__main__" and len(sys.argv) > 1:
     {"holdout_qa": stage_holdout_qa, "regime": stage_regime, "sources_dev": stage_sources_dev,
-     "dev": stage_dev}[sys.argv[1]]()
+     "dev": stage_dev, "dev_u4": stage_dev_u4}[sys.argv[1]]()

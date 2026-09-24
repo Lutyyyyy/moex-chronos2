@@ -67,6 +67,37 @@ def test_portfolio_paths_share_and_scale_invariance():
     assert not np.allclose(solved["a"]["vt_exposure"], solved["a_cal"]["vt_exposure"])   # vol targeting is level-sensitive
 
 
+def test_ewma_corr_with_matches_alpha_lib():
+    rng = np.random.default_rng(3)
+    idx = pd.bdate_range("2021-01-01", periods=300)
+    f = pd.Series(rng.normal(0, 0.01, 300), idx)
+    ret = pd.DataFrame({"A": 0.8 * f + rng.normal(0, 0.01, 300), "B": rng.normal(0, 0.01, 300)}, idx)
+    ret.iloc[5:20, 1] = np.nan
+    rho = ra.ewma_corr_with(ret, f)
+    ref = ra.al.ewma_corr(pd.concat([ret, f.rename("F")], axis=1))
+    for d in (idx[100], idx[-1]):
+        C = pd.DataFrame(ref["C"][d], ref["cols"], ref["cols"])
+        assert rho.loc[d, "A"] == pytest.approx(C.loc["A", "F"], abs=1e-10)
+        assert rho.loc[d, "B"] == pytest.approx(C.loc["B", "F"], abs=1e-10)
+    assert rho.iloc[:59].isna().all().all()
+
+
+def test_hedge_ratio_recovers_beta_and_is_level_sensitive():
+    rng = np.random.default_rng(4)
+    n = 4000; idx = pd.bdate_range("2010-01-01", periods=n)
+    f = pd.Series(rng.normal(0, 0.02, n), idx)
+    s = 1.3 * f + rng.normal(0, 0.015, n)
+    R_s = pd.DataFrame({"A": s}, idx)
+    rho = pd.DataFrame({"A": np.corrcoef(s, f)[0, 1]}, idx)
+    V = pd.DataFrame({"A": s.var()}, idx)
+    h = ra.hedge_ratios({"true": V, "x2": V * 4}, rho, pd.Series(f.var(), idx))
+    assert h["true"]["A"].iat[0] == pytest.approx(1.3, rel=0.03)
+    assert h["x2"]["A"].iat[0] == pytest.approx(2 * h["true"]["A"].iat[0])      # a variance level error moves h
+    e_true = ra.hedged_returns(h["true"], R_s, f).var().iat[0]
+    e_bad = ra.hedged_returns(h["x2"], R_s, f).var().iat[0]
+    assert e_true < e_bad and e_true < R_s.var().iat[0]
+
+
 def test_portfolio_paths_fails_loudly_without_dates():
     dates = pd.bdate_range("2022-01-03", periods=5); cols = [f"S{i}" for i in range(12)]
     V = pd.DataFrame(1e-3, dates, cols)

@@ -171,3 +171,34 @@ def portfolio_paths(var_arms: dict, corr: dict, R5: pd.DataFrame, rf5: pd.Series
         out[k]["gmv"] = out[src]["gmv"]
     idx = pd.DatetimeIndex(kept)
     return {k: {m: pd.Series(v, index=idx) for m, v in d_.items()} for k, d_ in out.items()}
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Hedging (U4): single stocks hedged with the index future
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def ewma_corr_with(ret: pd.DataFrame, x: pd.Series, lam: float = 0.97, min_obs: int = 60) -> pd.DataFrame:
+    """Per-column EWMA correlation of `ret` with the series `x` using data <= d, with the same update as
+    alpha_lib.ewma_corr (zero mean; a missing value enters as 0; NaN until both have `min_obs` obs)."""
+    x = x.reindex(ret.index)
+    R, X = ret.fillna(0.0), x.fillna(0.0)
+
+    def ew(df):                                                        # S_0 = 0, S_i = λS_{i-1} + (1−λ)z_i
+        z = pd.concat([df.iloc[:1] * 0, df])
+        return z.ewm(alpha=1 - lam, adjust=False).mean().iloc[1:]
+    cov = ew(R.mul(X, axis=0))
+    vs, vx = ew(R ** 2), ew(X.to_frame() ** 2).iloc[:, 0]
+    rho = cov / np.sqrt(vs.mul(vx, axis=0).clip(lower=1e-16))
+    ok = ret.notna().cumsum().ge(min_obs) & pd.DataFrame({c: x.notna().cumsum().ge(min_obs) for c in ret.columns})
+    return rho.where(ok)
+
+
+def hedge_ratios(var_arms: dict, rho: pd.DataFrame, var_f: pd.Series) -> dict:
+    """h = ρ̂·σ̂_s/σ̂_f per arm, with a shared correlation and futures variance (plan F1), so arms differ
+    only in the stock-variance forecast. `var_arms` and `var_f` are variances over the same horizon."""
+    return {k: rl.hedge_ratio(rho, np.sqrt(V), np.sqrt(var_f.reindex(V.index)).to_numpy()[:, None]) for k, V in var_arms.items()}
+
+
+def hedged_returns(h: pd.DataFrame, R_s: pd.DataFrame, R_f: pd.Series) -> pd.DataFrame:
+    """Hedged simple return r_s − h·r_f (a short of h futures per unit of stock)."""
+    return R_s - h.mul(R_f.reindex(R_s.index), axis=0)
