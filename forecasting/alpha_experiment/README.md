@@ -82,4 +82,46 @@ Plan: [`tmp/plans/alpha_experiment.md`](../../tmp/plans/alpha_experiment.md). Co
 
 ## Results
 
-_(appended after the test stage)_
+### 2024 test gate: run once on 2026-09-24, after pre-registration commit `f3ee7e3`
+
+| Leg | Statistic | 2024 value | Threshold | Verdict |
+|---|---|---:|---:|---|
+| A1 | IC Newey-West t (mean IC 0.096) | **3.54** | > 2 | pass |
+| A2 | net spanning alpha t (−1.9% p.a.) | **−0.55** | > 2 | **FAIL** |
+| A3 | Fama-MacBeth Chronos t | **2.61** | > 2 | pass |
+| B1 | DM p, Chronos better: raw vs EWMA / GARCH; scaled vs EWMA / GARCH | 0.71 / 0.99; 1.00 / 0.049 | all < 0.05 | **FAIL** |
+| B2 | bootstrap p, Chronos low-vol book > EWMA twin (ΔSharpe −0.63) | 0.86 | < 0.05 | **FAIL** |
+
+**Track A: FAIL. Track B: FAIL.** Neither track earns a "useful alpha generator" claim.
+
+### What the 2024 numbers say
+
+**Track A**
+
+The Chronos ranking signal is **informative but not monetizable beyond known factors**.
+- **IC:** mean IC 0.096. That is higher than any classic signal in 2024 (mom 0.050, lowvol 0.080, ar1 0.070).
+- **Incremental information:** it keeps a significant Fama-MacBeth coefficient after controlling for momentum, reversal, low-vol and size (t=2.61). A3 did better than its predicted power of 0.17.
+- **The book:** the beta-neutral long-short book earned gross Sharpe 1.82 and **net 1.06** at 10 bps round trip plus 5% borrow.
+- **Why it is not alpha:**
+  - **AR(1) does better net.** The AR(1) baseline, essentially the trailing-250-day mean, earned **net 1.16** with 9.7× turnover against Chronos's 26×. Chronos's cost breakeven is 25 bps one-way, versus 76 bps for AR(1).
+  - **The returns are spanned.** The Chronos net returns load on the AR(1) book (β=0.58, t=3.0) and low-vol (β=0.21, t=4.8), leaving an alpha of −1.9% p.a. (t=−0.55).
+  - **It is small even before costs.** Post-hoc and not gated: the *gross* spanning alpha is only +1.8% p.a. (t=0.56) in 2024 and +3.5% (t=1.47) on dev.
+- **Long-only:** the top quintile beat the equal-weight universe by +6.4% p.a. (IR 0.86, CAPM alpha t=0.84). This is not significant, in a year when IMOEX (price) fell 7.0% and MCFTR (total return) rose 1.6%, while cash at the key rate earned 17.6%. So every long-only book had a negative excess return.
+
+**Track B**
+
+Chronos's return-based σ is **not a better risk model** than EWMA or GARCH(1,1).
+- **Raw QLIKE:** it loses to GARCH (DM t=+2.3, Chronos worse) and ties EWMA.
+- **Level-adjusted QLIKE:** it beats GARCH narrowly (p=0.049) but loses clearly to EWMA (t=+3.6).
+- **Calibration broke in 2024:** the 1-step q05 hit rate was 6.6% and q10 12.2% (Kupiec p≈0), versus 5.0% and 10.0% on dev. The quantiles were too narrow in a rising-volatility year.
+- **Economic value:** no economic use beat its EWMA twin.
+
+**Reading.**
+- **Track A:** the per-ticker directional null in FINDINGS.md does *not* carry over to cross-sectional ranking, where Chronos has real IC. Most of that IC is a repackaging of trend/drift and low-vol that a one-line AR(1)/momentum rule captures more cheaply. The incremental part is statistically detectable (A3) but too small, and too expensive to trade at weekly frequency, to add alpha (A2).
+- **Track B:** zero-shot Chronos σ from daily returns is no better than a 1990s EWMA.
+
+Detailed tables are in `forecasting/runs/alpha_test/` (gitignored, reproducible with `alpha_run.py test` after deleting that dir; the code refuses a silent rerun). The trial ledger has all 8 dev trials and 6 test rows.
+
+### Next
+
+The holdout (2025-01 → 2026-09) is **still sealed**. The improvement wave (plan Part 3) has not been run. It is being re-prioritized in light of these results before any of it runs.
