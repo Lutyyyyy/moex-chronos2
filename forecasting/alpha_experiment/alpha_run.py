@@ -1093,6 +1093,133 @@ def stage_select(run_followups=True):
     return W
 
 
+# %% [markdown]
+# ## Stage `rvecon` (Track B economic value of the Chronos log-RV forecasts)
+# Same four uses as the v1 Track B test (low-vol LS factor, inverse-vol EW, vol-target overlays on EW and
+# momentum), sized with each vol model's 5-day variance forecast. The RV forecasts cover steps 1..5
+# while the lag-1 book holds d+2..d+6: a one-day-stale proxy, applied identically to all models.
+
+# %%
+def stage_rvecon():
+    D = load_data()
+    base = build_inputs(load_preds(), D)
+    V = vol_inputs(base, DEV_DIR)[0]
+    models = {"ewma": V["ewma"], "garch": V["garch"], "har_rv": V["har_rv_ceiling"]}
+    for nm in ["uni", "xl"]:
+        f = rv_forecast_path(nm)
+        if f.exists():
+            models[f"chronos_rv_{nm}"] = rv_var_forecast(pd.read_parquet(f), D["ret"].index, D["ret"].columns)
+    corr = al.ewma_corr(D["ret"], lam=BT_CFG["vol_target"]["corr_lambda"])
+    vt = BT_CFG["vol_target"]; nst = 5
+    ew = al.w_equal(base["mask"]); mom = books(base[f"classic{LAG}"]["mom_12_1"], base, "LS")
+    uses = {
+        "lowvol_factor": (lambda v: books(-np.sqrt(v), base, "LS"), False),
+        "inverse_vol_ew": (lambda v: al.w_inverse_vol(v, base["mask"]), True),
+        "voltarget_ew": (lambda v: al.vol_target_overlay(ew, v, corr, nst, vt["target_ann"], vt["lev_cap_lo"]), True),
+        "voltarget_mom": (lambda v: al.vol_target_overlay(mom, v, corr, nst, vt["target_ann"], vt["lev_cap_ls"]), False),
+    }
+    rows, pnl = [], {}
+    for use, (fn, excess) in uses.items():
+        for m, v in models.items():
+            st, bt = bt_stats(fn(v), base, "ext_dev", excess=excess)
+            pnl[(use, m)] = bt["net"]
+            rv63 = bt["net"].rolling(63).std() * np.sqrt(252)
+            rows.append(dict(use=use, model=m, net_sharpe=st.get("sharpe"), ann_vol=st.get("ann_vol"), max_dd=st.get("max_dd"),
+                             turnover=st.get("turnover_ann"),
+                             vol_tracking_err=float((rv63 - vt["target_ann"]).abs().mean()) if use.startswith("voltarget") else np.nan))
+        for m in [k for k in models if k.startswith("chronos_rv")]:
+            for ref in ["ewma", "garch", "har_rv"]:
+                b = al.sharpe_diff_bootstrap(pnl[(use, m)], pnl[(use, ref)])
+                rows[-len(models) + list(models).index(m)][f"boot_p_vs_{ref}"] = b["p_one_sided"]
+                rows[-len(models) + list(models).index(m)][f"sharpe_diff_vs_{ref}"] = b["diff"]
+            al.append_trial(LEDGER, track="B", tag="S3rvecon", period="ext_dev", signal=f"{use}|{m}", book=use,
+                            exec_lag=LAG, cost_bps=COST, borrow=BORROW,
+                            net_sharpe=[r for r in rows if r["use"] == use and r["model"] == m][0]["net_sharpe"], daily_sr=np.nan)
+    T = pd.DataFrame(rows)
+    out = IMP_DIR / "rvtarget"; out.mkdir(parents=True, exist_ok=True)
+    T.to_csv(out / "rvecon_table.csv", index=False)
+    pd.set_option("display.width", 250)
+    print(T.round(3).to_string(index=False))
+    return T
+
+
+# %% [markdown]
+# ## Stage `qshape` (step 3): quantile-shape signals + robust-spread vol forecasts, from stored forecasts
+# Orientation fixed from the literature BEFORE evaluation: short forecast skew and upside asymmetry
+# (lottery/skewness effect), long tail heaviness and standardized downside (tail-risk premium),
+# long P(r>0). IC/FM t are two-sided statistics, so a wrong-way sign still shows up.
+
+# %%
+QSHAPE_ORIENT = {"SKEW": -1, "UPDOWN": -1, "TAIL": +1, "DOWN": +1, "PUP": +1}
+
+
+def stage_qshape(config="uni"):
+    out = IMP_DIR / config; out.mkdir(parents=True, exist_ok=True)
+    D = load_data()
+    base = build_inputs(load_preds(), D)
+    preds = load_preds(config_preds_path(config))
+    X = build_inputs(preds, D); X["preds"] = preds
+    X["mask"] = base["mask"] & X[f"F{LAG}"]["MED"].notna()
+    C = X[f"classic{LAG}"]; chron = X[f"F{LAG}"]["MED_SIG"]
+    classic_pnl = {(k, nt): bt_stats(books(C[k], X, "LS"), X, "ext_dev", n_tranches=nt)[1]["net"]
+                   for k in BT_CFG["classic"] for nt in (BT_CFG["rebalance"]["n_tranches"],)}
+    Sh = al.quantile_shape_features(preds, STEPS[LAG])
+    feats = al.context_features(D["ret"], shape=True)
+    d = ic_dates(X, "ext_dev", STEPS[LAG])
+    rows = []
+    print(f"[{config}] quantile-shape signals (ext_dev 2021-2024)")
+    for k, sgn in QSHAPE_ORIENT.items():
+        sig = sgn * al.to_wide(Sh, k, X["cal"]).reindex(columns=D["ret"].columns)
+        r, _, _ = eval_signal(f"qshape_{k}", sig, X, classic_pnl, tag=f"S3qshape_{config}")
+        fm = al.fama_macbeth(X[f"fwd{LAG}"], {"sig": sig, "chronos_med_sig": chron, "mom_12_1": C["mom_12_1"],
+                                              "rev_5d": C["rev_5d"], "rev_1d": C["rev_1d"], "lowvol_60d": C["lowvol_60d"],
+                                              "size": C["size"]}, X["mask"], lags=NW, dates=d)
+        r["fm_t_over_chronos_and_classic"] = float(fm.loc["sig", "t"])
+        fit, oos = al.rolling_xs_fit(sig, feats, X["mask"])
+        r["shape_mimic_oos_r2"] = float((oos.loc["2021":"2024"] ** 2).mean())
+        resid = al.xs_standardize(sig, X["mask"]) - fit
+        fmr = al.fama_macbeth(X[f"fwd{LAG}"], {"sig": resid, "mom_12_1": C["mom_12_1"], "rev_5d": C["rev_5d"],
+                                               "rev_1d": C["rev_1d"], "lowvol_60d": C["lowvol_60d"], "size": C["size"]},
+                              X["mask"], lags=NW, dates=d)
+        r["fm_t_chronos_specific_part"] = float(fmr.loc["sig", "t"])
+        rows.append(r)
+        print(f"  {k:7s} IC {r['ic']:+.3f} (t {r['ic_t']:+.2f})  netSR {r['ls_net_sharpe']:+.2f}  span t {r['span_alpha_t']:+.2f}  "
+              f"FM t {r['fm_t']:+.2f}  FM|chronos t {r['fm_t_over_chronos_and_classic']:+.2f}  "
+              f"mimic R2 {r['shape_mimic_oos_r2']:.2f}  specific FM t {r['fm_t_chronos_specific_part']:+.2f}", flush=True)
+    T = pd.DataFrame(rows).set_index("variant"); T.to_csv(out / "qshape_signals.csv")
+    # vol track: robust spread vs variance integral (same config), and vs EWMA/GARCH; identical calibration
+    print(f"[{config}] robust-spread vol forecasts")
+    V = vol_inputs(base, DEV_DIR)[0]
+    steps = STEPS[0]; rv_fwd = sum(D["rv"].shift(-h) for h in steps)
+    d0 = ic_dates(X, "ext_dev", steps)
+    Sh0 = al.quantile_shape_features(preds, steps)
+    cands = {"sig_variance": al.vol_chronos(X["F0"]["SIG"]),
+             "iqr80": al.to_wide(Sh0, "VAR_IQR80", X["cal"]).reindex(columns=D["ret"].columns),
+             "iqr50": al.to_wide(Sh0, "VAR_IQR50", X["cal"]).reindex(columns=D["ret"].columns),
+             "ewma": V["ewma"], "garch": V["garch"]}
+    m = X["mask"].loc[d0]
+    for v in cands.values():
+        m &= v.loc[d0].notna()
+    L, Lc = {}, {}
+    for k, v in cands.items():
+        sc = al.rolling_vol_scale(v, rv_fwd, X["mask"], horizon=max(steps))
+        L[k] = al.vol_loss_panel(rv_fwd.loc[d0], v.loc[d0], m)
+        Lc[k] = al.vol_loss_panel(rv_fwd.loc[d0], v.mul(sc, axis=0).loc[d0], m)
+    vrows = []
+    for k in ["iqr80", "iqr50"]:
+        vr = dict(model=k, qlike_raw=float(L[k].mean()), qlike_cal=float(Lc[k].mean()))
+        for ref in ["sig_variance", "ewma", "garch"]:
+            vr[f"dm_raw_vs_{ref}"] = al.dm_test(L[k], L[ref], NW)["t"]
+            vr[f"dm_cal_vs_{ref}"] = al.dm_test(Lc[k], Lc[ref], NW)["t"]
+        vrows.append(vr)
+        al.append_trial(LEDGER, track="B", tag=f"S3qshape_{config}", period="ext_dev", signal=f"vol_{k}", book="vol_forecast",
+                        exec_lag=0, cost_bps=np.nan, borrow=np.nan, net_sharpe=np.nan, daily_sr=np.nan)
+    vrows.append(dict(model="sig_variance", qlike_raw=float(L["sig_variance"].mean()), qlike_cal=float(Lc["sig_variance"].mean())))
+    VT = pd.DataFrame(vrows).set_index("model"); VT.to_csv(out / "qshape_vol.csv")
+    pd.set_option("display.width", 250); print(VT.round(3).to_string())
+    return T, VT
+
+
 # %%
 if __name__ == "__main__" and len(sys.argv) > 1:
     stage = sys.argv[1]
@@ -1111,6 +1238,10 @@ if __name__ == "__main__" and len(sys.argv) > 1:
             stage_dev(tag=sys.argv[sys.argv.index("--tag") + 1] + "_dev" if "--tag" in sys.argv else "v1_dev")
     elif stage == "variants":
         stage_variants()
+    elif stage == "qshape":
+        stage_qshape(sys.argv[2] if len(sys.argv) > 2 else "uni")
+    elif stage == "rvecon":
+        stage_rvecon()
     elif stage == "rvtarget":
         stage_rvtarget()
     elif stage == "select":

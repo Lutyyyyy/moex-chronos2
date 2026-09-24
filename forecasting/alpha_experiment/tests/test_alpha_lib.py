@@ -466,3 +466,16 @@ def test_mean_exp_quantiles_lognormal():
     Q = mu + sd * sstats.norm.ppf(u)
     got = al.mean_exp_quantiles(Q, u)
     assert got == pytest.approx(math.exp(mu + sd ** 2 / 2), rel=0.03)      # grid-truncated tails -> small bias
+
+
+def test_quantile_shape_features_normal_and_skewed():
+    u = al.NATIVE_QUANTILES; z = sstats.norm.ppf(u); a = pd.Timestamp("2022-01-10")
+    rows = [{"anchor": a, "ticker": "N", "h": h, **{f"q{x:g}": 0.0 + 0.01 * y for x, y in zip(u, z)}} for h in (1, 2)]
+    lz = sstats.lognorm.ppf(u, 0.8); lz = (lz - np.median(lz)) * 0.01            # right-skewed, median 0
+    rows += [{"anchor": a, "ticker": "S", "h": h, **{f"q{x:g}": y for x, y in zip(u, lz)}} for h in (1, 2)]
+    f = al.quantile_shape_features(pd.DataFrame(rows), steps=(1, 2))
+    n, sk = f.loc[(a, "N")], f.loc[(a, "S")]
+    assert n["SKEW"] == pytest.approx(0, abs=1e-9) and n["UPDOWN"] == pytest.approx(0, abs=1e-9)
+    assert n["PUP"] == pytest.approx(0.5, abs=1e-6)
+    assert n["VAR_IQR80"] == pytest.approx(2 * 0.01 ** 2, rel=1e-3) and n["VAR_IQR50"] == pytest.approx(2 * 0.01 ** 2, rel=1e-3)
+    assert sk["SKEW"] > 0.2 and sk["UPDOWN"] > 0 and sk["TAIL"] > n["TAIL"]

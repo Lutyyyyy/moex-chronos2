@@ -949,13 +949,20 @@ def append_trial(ledger_path, **row) -> None:
 # 11. Step-3 improvements: mimic, combination, turnover control, vol calibration
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def context_features(ret: pd.DataFrame) -> dict[str, pd.DataFrame]:
+def context_features(ret: pd.DataFrame, shape: bool = False) -> dict[str, pd.DataFrame]:
     """Cheap statistics of each name's own return history, all known at close d (the inputs a
-    'Chronos-mimic' may use): trailing means, trailing vols, last return, EWMA vol."""
+    'Chronos-mimic' may use): trailing means, trailing vols, last return, EWMA vol; with
+    shape=True also trailing skewness, kurtosis and 20-day max/min return (shape mimic)."""
     f = {f"m{w}": ret.rolling(w, min_periods=max(3, w // 2)).mean() for w in (5, 20, 60, 120, 250)}
     f.update({f"s{w}": ret.rolling(w, min_periods=max(3, w // 2)).std() for w in (20, 60, 250)})
     f["r1"] = ret
     f["ewvol"] = np.sqrt((ret ** 2).ewm(alpha=0.06, adjust=False, ignore_na=True).mean())
+    if shape:
+        for w in (60, 250):
+            f[f"skew{w}"] = ret.rolling(w, min_periods=w // 2).skew()
+            f[f"kurt{w}"] = ret.rolling(w, min_periods=w // 2).kurt()
+        f["max20"] = ret.rolling(20, min_periods=10).max()
+        f["min20"] = ret.rolling(20, min_periods=10).min()
     return f
 
 
@@ -1054,3 +1061,30 @@ def mean_exp_quantiles(Q: np.ndarray, u: Sequence[float] = NATIVE_QUANTILES, n_g
     Qg = Q[..., idx] * (1 - w) + Q[..., idx + 1] * w
     Qg = np.where(g < u[0], Q[..., :1], np.where(g > u[-1], Q[..., -1:], Qg))
     return np.exp(Qg).mean(axis=-1)
+
+
+def quantile_shape_features(preds: pd.DataFrame, steps: Sequence[int], quantiles: Sequence[float] = NATIVE_QUANTILES) -> pd.DataFrame:
+    """Shape of the per-step forecast distribution, averaged over `steps`:
+    SKEW = (q90+q10-2q50)/(q90-q10); UPDOWN = log((q90-q50)/(q50-q10)); TAIL = (q99-q01)/(q90-q10);
+    DOWN = (q50-q05)/(q90-q10) (standardized downside); PUP = forecast P(r>0) from the piecewise-
+    linear quantile function; plus robust per-step spreads for the vol track:
+    VAR_IQR80 = Σ ((q90-q10)/2.5631)^2 and VAR_IQR50 = Σ ((q75-q25)/1.3490)^2 (Normal-equivalent)."""
+    p = preds[preds["h"].isin(list(steps))].copy()
+    w = (p["q0.9"] - p["q0.1"]).replace(0, np.nan)
+    up = (p["q0.9"] - p["q0.5"]).clip(lower=1e-12); dn = (p["q0.5"] - p["q0.1"]).clip(lower=1e-12)
+    p["SKEW"] = (p["q0.9"] + p["q0.1"] - 2 * p["q0.5"]) / w
+    p["UPDOWN"] = np.log(up / dn)
+    p["TAIL"] = (p["q0.99"] - p["q0.01"]) / w
+    p["DOWN"] = (p["q0.5"] - p["q0.05"]) / w
+    Q = p[[f"q{q:g}" for q in quantiles]].to_numpy(); u = np.asarray(quantiles)
+    pup = np.empty(len(p))
+    for i in range(len(p)):                       # P(r>0) = 1 - F(0), F from interpolating u over Q
+        q = Q[i]
+        pup[i] = 1 - (u[0] if 0 <= q[0] else u[-1] if 0 >= q[-1] else np.interp(0.0, q, u))
+    p["PUP"] = pup
+    p["V80"] = ((p["q0.9"] - p["q0.1"]) / 2.5631) ** 2
+    p["V50"] = ((p["q0.75"] - p["q0.25"]) / 1.3490) ** 2
+    g = p.groupby(["anchor", "ticker"])
+    out = g[["SKEW", "UPDOWN", "TAIL", "DOWN", "PUP"]].mean()
+    out["VAR_IQR80"] = g["V80"].sum(); out["VAR_IQR50"] = g["V50"].sum()
+    return out
