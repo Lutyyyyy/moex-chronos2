@@ -3,7 +3,9 @@
 Stages, run from the repo root as  .venv/bin/python forecasting/risk_experiment/risk_run.py <stage>:
   holdout_qa   data QA of the 2025-26 holdout panel. Market data only: no forecasts, no evaluation.
   regime       fix the real-time stress rule on dev market data; write S_d for all dates.
-Later stages (sources_dev, bundle_dev, dev, select, holdout_sources, bundle_holdout, holdout) are added
+  sources_dev  new zero-shot Chronos sources on dev anchors (holdout locked): N1 multivariate
+               [return, log-RV] daily H=5; N4 the same on non-overlapping 5-day blocks, H=1.
+Later stages (bundle_dev, dev, select, holdout_sources, bundle_holdout, holdout) are added
 in R2-R7.
 """
 import json
@@ -18,6 +20,7 @@ ROOT = HERE.parents[1]
 sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(ROOT / "forecasting" / "alpha_experiment"))
 import alpha_lib as al  # noqa: E402
+import chronos_sources as cs  # noqa: E402
 import risk_lib as rl  # noqa: E402
 
 RUNS = ROOT / "forecasting" / "runs"
@@ -135,5 +138,50 @@ def stage_regime() -> dict:
     return rule
 
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# Stage sources_dev (R2)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+FIRST_ANCHOR = "2021-01-01"                      # same anchors as the alpha experiment's dev forecasts
+SOURCES = {   # name: (block days, stride, context length in rows, horizon)
+    "N1": (1, 1, 250, 5),                        # daily [return, log-RV], steps d+1..d+5
+    "N4": (5, 5, 100, 1),                        # 5-day blocks (100 blocks = 500 days), next block d+1..d+5
+}
+
+
+def source_path(name: str, period: str = "dev") -> Path:
+    return OUT / "sources" / period / name / "preds.parquet"
+
+
+def stage_sources_dev(threads: int = 4) -> dict:
+    import torch
+    torch.set_num_threads(threads)
+    sys.path.insert(0, str(ROOT / "forecasting" / "alpha_experiment"))
+    import alpha_run as R                          # pipeline loader (same model and settings)
+    D = load_panel(DEV_PANEL, ("ret", "rv", "eligible"))
+    cal = D["ret"].index
+    anchors = cal[cal >= pd.Timestamp(FIRST_ANCHOR)]
+    pipe, checks = None, {}
+    for name, (block, stride, ctx, H) in SOURCES.items():
+        f = source_path(name)
+        if not f.exists():
+            pipe = pipe or R.load_pipeline()
+            P = cs.rv_panels(D["ret"], D["rv"], block=block)
+            cs.generate_multivariate(pipe, P, D["eligible"], anchors, ctx=ctx, H=H, stride=stride,
+                                     cross_learning=True, out_path=f)
+            print(f"[{name}] done", flush=True)
+        p = pd.read_parquet(f)
+        qcols = [c for c in p.columns if c.startswith("q")]
+        cross = int((np.diff(p[qcols].to_numpy(), axis=1) < 0).any(axis=1).sum())
+        exp = int(D["eligible"].reindex(anchors).sum().sum())
+        got = p[["anchor", "ticker"]].drop_duplicates().shape[0]
+        checks[name] = {"rows": len(p), "anchors": int(p["anchor"].nunique()), "anchor_ticker_pairs": got,
+                        "eligible_pairs": exp, "rows_with_crossing_quantiles": cross,
+                        "max_anchor": str(pd.Timestamp(p["anchor"].max()).date())}
+    (OUT / "sources" / "dev" / "checks.json").write_text(json.dumps(checks, indent=1))
+    print(json.dumps(checks, indent=1))
+    return checks
+
+
 if __name__ == "__main__" and len(sys.argv) > 1:
-    {"holdout_qa": stage_holdout_qa, "regime": stage_regime}[sys.argv[1]]()
+    {"holdout_qa": stage_holdout_qa, "regime": stage_regime, "sources_dev": stage_sources_dev}[sys.argv[1]]()
