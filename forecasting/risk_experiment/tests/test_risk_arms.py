@@ -65,3 +65,10 @@ def test_portfolio_paths_share_and_scale_invariance():
     solved = ra.portfolio_paths(arms, corr, R5, rf5, U, dates, 0.02)
     pd.testing.assert_series_equal(shared["a_cal"]["gmv"], solved["a_cal"]["gmv"], check_names=False, atol=1e-10)
     assert not np.allclose(solved["a"]["vt_exposure"], solved["a_cal"]["vt_exposure"])   # vol targeting is level-sensitive
+
+
+def test_portfolio_paths_fails_loudly_without_dates():
+    dates = pd.bdate_range("2022-01-03", periods=5); cols = [f"S{i}" for i in range(12)]
+    V = pd.DataFrame(1e-3, dates, cols)
+    with pytest.raises(ValueError):
+        ra.portfolio_paths({"a": V}, {}, V, pd.Series(0.0, dates), pd.DataFrame(True, dates, cols), dates, 0.02)

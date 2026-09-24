@@ -165,6 +165,8 @@ def portfolio_paths(var_arms: dict, corr: dict, R5: pd.DataFrame, rf5: pd.Series
             e = min(target5 / sp, cap)
             out[k]["vt"].append(float(e * (w_ew @ r5) + (1 - e) * rf5.loc[d]))
             out[k]["vt_exposure"].append(e)
+    if not kept:
+        raise ValueError("portfolio_paths: no usable dates (check the universe and the correlation dict keys)")
     for k, src in gmv_share.items():
         out[k]["gmv"] = out[src]["gmv"]
     idx = pd.DatetimeIndex(kept)

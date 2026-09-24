@@ -377,7 +377,8 @@ def evaluate_vol(arms: dict, D, S, mask5) -> tuple:
     for v in arms.values():
         U &= v.gt(0)
     dates = U.index[U.sum(axis=1) >= 10]
-    corr = al.ewma_corr(ret)
+    ec = al.ewma_corr(ret)                                              # {"cols": Index, "C": {date: ndarray}}
+    corr = {d: pd.DataFrame(C, index=ec["cols"], columns=ec["cols"]) for d, C in ec["C"].items() if d in set(dates)}
     target5 = VT_TARGET_ANNUAL * np.sqrt(5 / 252)
     # GMV is invariant to a date-common scale, so calibrated arms share their raw arm's GMV
     raw_names = [k for k in arms if not k.endswith("_cal")]
