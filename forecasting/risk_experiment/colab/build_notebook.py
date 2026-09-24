@@ -20,7 +20,10 @@ cells = [
        "  - the evaluation year is never used for any choice.\n"
        "- **When done:** run the last cell and download `outputs.zip` into "
        "`forecasting/runs/risk_ft/<mode>/` in the repo."),
-    CODE("!pip -q install chronos-forecasting==2.3.2 peft"),
+    CODE("!pip -q install chronos-forecasting==2.3.2 peft\n"
+         "# Colab ships torchao 0.10; recent peft rejects torchao < 0.16 when it sets up LoRA. Chronos does not\n"
+         "# use torchao, so remove it. After this cell: Runtime -> Restart session, then Run all.\n"
+         "!pip -q uninstall -y torchao"),
     CODE("from google.colab import drive\n"
          "drive.mount('/content/drive')\n"
          "BUNDLE = '/content/drive/MyDrive/risk_bundle_dev'   # <- the unzipped bundle folder on Drive\n"
