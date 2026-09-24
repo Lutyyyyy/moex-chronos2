@@ -201,10 +201,19 @@ def build_n5_series(D) -> dict:
     """Plan F5 inputs on the dev calendar: RV of the equal-weight portfolio and of IMOEX (a), and each
     stock's residual RV after β_i(d-1)·r_IMOEX (b). β = trailing 250-day OLS beta of daily returns on
     IMOEX, lagged one row so the residual at t uses β known at t-1. Cached under runs/risk/n5/."""
-    import n5_series as n5
     f = {k: N5_DIR / f"{k}.parquet" for k in ("mkt_rv", "resid_rv", "beta")}
     if all(p.exists() for p in f.values()):
         return {k: pd.read_parquet(p) for k, p in f.items()}
+    out = n5_series_from_panel(D)
+    N5_DIR.mkdir(parents=True, exist_ok=True)
+    for k, v in out.items():
+        v.to_parquet(f[k])
+    return out
+
+
+def n5_series_from_panel(D) -> dict:
+    """The N5 series for any panel (dev or full); build_n5_series caches the dev version."""
+    import n5_series as n5
     cal = D["ret"].index
     shares = al.load_long(ROOT / "data_pipeline/data/processed/candles_10m/shares.parquet",
                           columns=["ticker", "timestamp", "close_adj"], end=cal.max())
@@ -216,9 +225,6 @@ def build_n5_series(D) -> dict:
                                    "IMOEX": al.realized_variance(index, cal, col="close")["IMOEX"]}).reindex(cal),
            "resid_rv": n5.residual_rv(R, r_m, beta).reindex(index=cal, columns=D["ret"].columns),
            "beta": beta}
-    N5_DIR.mkdir(parents=True, exist_ok=True)
-    for k, v in out.items():
-        v.to_parquet(f[k])
     return out
 
 
@@ -661,7 +667,7 @@ def stage_dev_u4() -> pd.DataFrame:
     return t4
 
 
-def build_n5_arms(D, S5, mask5) -> tuple:
+def build_n5_arms(D, S5, mask5, preds: tuple | None = None, loghar_resid=None) -> tuple:
     """N5 forecasts (5-day variances) for Chronos and two classical twins on the same series:
     fac  {arm: (σ²_m IMOEX, σ²_ε residual panel)} for the one-factor Σ;
     port {arm: σ²_p of the equal-weight portfolio}.
@@ -674,7 +680,7 @@ def build_n5_arms(D, S5, mask5) -> tuple:
     eps = ret.sub(S5["beta"].mul(m_ret, axis=0))                        # residual daily return, β known at t-1
     ewp = (ret.fillna(0) * el.astype(float).div(el.sum(axis=1), axis=0)).sum(axis=1).where(el.any(axis=1))
     fwd = lambda x: sum(x.shift(-h) for h in steps) ** 2                 # noqa: E731
-    Pm, Pe = pd.read_parquet(source_path("N5m")), pd.read_parquet(source_path("N5e"))
+    Pm, Pe = preds if preds is not None else (pd.read_parquet(source_path("N5m")), pd.read_parquet(source_path("N5e")))
     mk = S5["mkt_rv"]
     s2m = {"chr": ra.chronos_rv(Pm, steps, cal, ["EWP", "IMOEX"])["IMOEX"],
            "loghar": al.vol_har_log(mk[["IMOEX"]], steps)["IMOEX"],
@@ -683,7 +689,8 @@ def build_n5_arms(D, S5, mask5) -> tuple:
            "loghar": al.vol_har_log(mk[["EWP"]], steps)["EWP"],
            "ewma": al.vol_ewma(ewp.to_frame(), 5).iloc[:, 0]}
     s2e = {"chr": ra.chronos_rv(Pe, steps, cal, list(ret.columns)),
-           "loghar": _cached("n5_loghar_resid", lambda: al.vol_har_log(S5["resid_rv"], steps, mask=el, pooled=True, market=True)),
+           "loghar": (loghar_resid if loghar_resid is not None else
+                      _cached("n5_loghar_resid", lambda: al.vol_har_log(S5["resid_rv"], steps, mask=el, pooled=True, market=True))),
            "ewma": al.vol_ewma(eps, 5)}
     in_dev = mask5.any(axis=1)
     fac, port = {}, {}
