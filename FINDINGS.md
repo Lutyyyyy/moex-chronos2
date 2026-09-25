@@ -112,8 +112,9 @@ multivariate input, covariates or LoRA fine-tuning give it an edge. This study, 
 **Which variants helped (dev, 2021–24).**
 - **Mixing** Chronos 50/50 with a classical model beat Chronos alone in every use; three of the four frozen
   Chronos arms are such mixtures (the fourth, for vol targeting, is a one-factor covariance model).
-- **Multivariate input** (returns and log realized variance forecast jointly) was the best zero-shot source for
-  VaR; its LoRA fine-tuned version was frozen for VaR and minimum-variance.
+- **Multivariate input** (returns and log realized variance forecast jointly): its return quantiles, mixed with
+  FHS log-HAR, were the best zero-shot VaR arm, and its LoRA fine-tuned version was frozen for VaR and
+  minimum-variance. Section 4 compares the input modes head to head.
 - **No measurable gain:** past covariates (IMOEX, Brent, USD/RUB and gold volatility), a Chronos model of the
   correlation side (market and residual variance), and fine-tuning on log-RV alone.
 - **Only weak baselines were beaten significantly** on dev (RiskMetrics, GARCH-t, GARCH); against the best
@@ -126,6 +127,46 @@ multivariate input, covariates or LoRA fine-tuning give it an edge. This study, 
   arms on 2022–24. On the holdout the VaR gain reversed sign (t +1.07) and the GMV gain was insignificant.
   Fine-tuning on log-RV alone never helped.
 - **Regimes:** "better in calm, worse in stress" held on dev; on the holdout it reversed for GMV.
+
+## 4. Which Chronos-2 modes worked
+
+Across the three studies Chronos-2 was run in most of the ways it can be run. One naming note: study 1's
+"multivariate vs univariate" switch was Chronos-2's `cross_learning` flag (tickers in a batch attend to each
+other); here that is called cross-learning, and *multivariate* means several series of the same stock forecast
+jointly ([return, log realized variance], tested only in study 3). Each row compares a mode with the plain
+univariate call (one series, its own history), on dev data unless marked.
+
+| Mode | Direction (1) | Ranking (2) | Volatility and risk (2, 3) |
+|---|---|---|---|
+| **Cross-learning** across tickers | no effect: \|ΔDA\| ≤ 0.0018, 0 of 64 cells in 8 runs | weaker: IC t 5.47 vs 6.37 | better return-based σ (scaled-QLIKE DM t −3.77); none on log-RV (QLIKE 0.501 vs 0.504); worse VaR from return quantiles (FZ0 t +1.84) |
+| **Multivariate** [return, log-RV] | — | — | better VaR quantiles (t −3.35 vs the same cross-learning call without log-RV, −1.62 vs univariate); worse variance forecasts than log-RV alone (QLIKE 0.598 vs 0.554, t +1.50; GMV t +1.83) |
+| **Target** other than returns | — | log price: IC t 2.59 vs 6.37 | log-RV: the largest single effect, QLIKE 0.554 vs 0.890 (t 3.05), though GMV vol barely differs (t 0.45) |
+| **Past covariates** (market, sector, futures) | — | the biggest ranking gain: Fama-MacBeth t 4.09 beyond univariate, but net spanning t 0.82 | no measurable gain (QLIKE 0.545 vs 0.554, FZ0 −3.057 vs −3.055; GMV and hedging slightly worse) |
+| **Context** length | 35 / 100 / 250: all null | 250 best (IC t 6.37 vs 4.8–5.4 at 64 / 128 / 512) | — |
+| **LoRA fine-tuning** | — | — | multivariate: better than zero-shot in 21 of 22 arms on 2022–24, then worse for VaR on the holdout (t +1.07) and insignificant for GMV (t −0.57); log-RV only: never significant |
+
+- **Univariate vs multivariate.** Letting tickers attend to each other helped nowhere except the volatility
+  forecasts read from return quantiles. Forecasting return and log-RV jointly helps the return side (the
+  quantiles see the volatility) and hurts the variance side; only the gain over cross-learning returns clears
+  |t| = 2.
+- **What mattered more than grouping:** the target and the use of the output. Forecasting log-RV rather than
+  returns; turning that variance into VaR by filtered historical simulation rather than reading Chronos's
+  univariate return quantiles (FZ0 −3.055 vs −2.970, t −1.59); calibrating it for hedging (t −1.98 within the
+  mixture); and mixing 50/50 with a classical model, which beat Chronos alone in every use.
+- **What to use, per job (dev):**
+  - VaR: multivariate return quantiles mixed with FHS log-HAR.
+  - Volatility, minimum-variance and hedging: log-RV mixed with pooled log-HAR. The single-series log-RV call
+    (with cross-learning) and a multivariate variant on 5-day blocks tie on variance (QLIKE t 0.07; GMV t −0.16
+    mixed), but the 5-day variant's hedges failed in the 2022 stress (stress-day hedged vol 381% vs 40%; 142%
+    vs 34% over 2021–24).
+  - Vol targeting: a one-factor model on Chronos market and residual variances.
+  - Ranking: univariate returns with futures covariates at context 250. Direction: nothing.
+- **No mode changed a verdict.** The choices moved Chronos around the level of the best classical model, never
+  clearly past it.
+
+The head-to-head t-statistics in study 3 are Diebold-Mariano tests on dev arms already in the ledger, computed
+after the holdout was opened and not corrected for multiplicity
+([`chronos_modes.csv`](forecasting/risk_experiment/results/dev/chronos_modes.csv)).
 
 ## What the evaluation discipline caught
 
