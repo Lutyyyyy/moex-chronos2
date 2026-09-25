@@ -1,4 +1,4 @@
-# Findings: zero-shot Chronos-2 on MOEX equities
+# Findings: Chronos-2 on MOEX equities
 
 **Headline result: a rigorous, replicated null.** Across ~10 independent axes — universe
 composition, time resolution (daily / 1h / 10m), grouping (multivariate vs. univariate
@@ -9,6 +9,11 @@ beyond chance. Every gate, pre-registered before the run, failed. This document 
 that result and the methodology behind it, because for a study like this the methodology
 *is* the contribution: the value isn't "did it make money," it's whether the process would
 have caught a real edge if one had been there.
+
+Two follow-ups extend the question beyond direction. A cross-sectional study found real ranking skill
+(IC ≈ 0.07) but no net alpha beyond standard factors. A risk study found that Chronos reaches, but does
+not beat, the best classical models for VaR/ES and hedging on a pre-registered 2025–26 holdout (both
+sections below).
 
 ## Why this is a meaningful negative result, not just "it didn't work"
 
@@ -30,8 +35,11 @@ things earn that here:
   diagnosed, and fixed before any confirmation run used the flawed shortlist. Later, the
   context-length sweep independently produced one BH-significant ticker (UNAC) at exactly
   one of three tested context lengths — rather than report it, a fresh out-of-sample
-  holdout was pulled and run specifically to test it, and it did not replicate. Both are
-  the same lesson, caught and resolved the same way (details below).
+  holdout was pulled and run specifically to test it. The effect weakened but didn't fully
+  vanish, so rather than stop at "not BH-significant," the mechanism was traced directly to
+  a transient, idiosyncratic momentum regime in UNAC's own price history — not a cross-asset
+  dependency, which is what the test was actually built to detect. Both are the same lesson,
+  caught and resolved the same way (details below).
 
 ## Method
 
@@ -146,15 +154,44 @@ would look like. So rather than settle this on the same data from three differen
 the actual test was run: the same 18-ticker family, at ctx=100, on a completely fresh
 window — 2024-11-01 to 2026-09-17, entirely new calendar time, fetched via a dedicated
 `data_pipeline` pull specifically for this check (385 windows, more than either original
-run). **Result: null.** UNAC's DA drops to 0.545–0.569, and none of its four horizons
-survive BH correction (best p_bh=0.26, nowhere near 0.05) — nor does any other ticker in
-the family. The anomaly did not replicate.
+run). **Result: UNAC's DA drops to 0.545–0.569** — still the top 4 cells of 72 tested, but
+none of its four horizons survive BH correction (best p_bh=0.26, nowhere near 0.05), nor
+does any other ticker in the family.
+
+0.55 DA is not nothing, and treating "p_bh>0.05" as the whole answer would be too quick —
+that was pointed out directly, and it was fair to push back on. Two things resolve it
+properly. First, base rate: under a pure global null (no ticker has any real relationship),
+the single-cell raw p for UNAC's best holdout horizon (h=2, DA=0.569, p≈0.008) is genuinely
+low — but across 72 independently tested cells, `1 − (1 − 0.008)^72 ≈ 44%`. Close to a coin
+flip's worth of chance that *some* cell in a family this size looks this extreme even if
+nothing real is happening anywhere. Second, and more decisive: **what actually produced the
+original hit is identifiable, and it isn't a cross-asset dependency.**
+
+UNAC's own return series shows why. In the original confirmation window (2023-07-01 to
+2024-12-30), UNAC's lag-1 return autocorrelation is **0.222** — unusually high (vs. 0.054 in
+the discovery window and 0.068 in the holdout). The cause is visible directly in the price:
+UNAC spiked **+157% in a single month** (Aug 2023: 0.77 → 1.99) and then trended down in
+nearly every following month through May 2024 (−7%, −13%, −31%, +18%, −10%, −5%, −15%,
+−33%...) — a real, sustained, one-directional move, not noise. A `context_len=100` window is
+long enough to pick up a multi-month trend like that and short enough for it to dominate the
+lookback. A trivial, one-line rule with zero cross-asset information — "yesterday's return
+sign predicts the 2-day-ahead return sign" — gets **DA=0.535 on that same confirmation
+window**, in the same direction as Chronos's edge, just weaker. That same naive rule gets
+**DA=0.478 (below chance) on the holdout window**, where UNAC's return autocorrelation had
+reverted to ordinary levels and its sign-autocorrelation actually went slightly negative
+(mean-reverting). Chronos's DA on UNAC rose and fell in exactly the same pattern (0.60 → 0.55)
+as this zero-information momentum baseline (0.535 → 0.478), which is the signature of a
+model partially riding a transient, idiosyncratic trend in one ticker's own price history —
+not evidence of a lead-lag relationship to the other tickers, indexes, or futures this test
+was actually designed to detect.
 
 This closes the question the only way that actually could: not by arguing about the
-existing data harder, but by testing on data nobody had looked at yet. It's the same
-lesson the market-factor bug taught, demonstrated a second time end-to-end — a result that
-clears every pre-registered gate criterion on its own numbers can still be a false
-positive, and the only test that reliably tells the difference is a fresh one.
+existing data harder, but by testing on data nobody had looked at yet, and then checking the
+mechanism rather than stopping at the corrected p-value. It's the same lesson the
+market-factor bug taught, demonstrated a second time end-to-end — a result that clears every
+pre-registered gate criterion on its own numbers, and that still looks like "the best result
+in the run" even after replication weakens it, can still be explained by something with
+nothing to do with the hypothesis being tested.
 
 **Sector baskets** (4 sectors — oil & gas, metals & mining, financials, utilities — ×
 {daily, 1h} × {context 35, 100, 250} = 24 configs, same McNemar gate as the basket-gate
@@ -177,9 +214,10 @@ the gate doesn't let it through alone.
 daily, hourly, and 10-minute resolution, and across a full log-spaced sweep of context
 length — 35 bars (≈7 trading weeks), 100 bars (≈20 weeks), and 250 bars (≈1 trading year).
 No resolution or context choice recovered a signal any other choice missed; the one
-apparent exception (UNAC at ctx=100, above) was checked against a fresh holdout window and
-did not replicate — exactly the kind of isolated hit this sweep was designed to be able to
-catch and correctly reject.
+apparent exception (UNAC at ctx=100, above) was checked against a fresh holdout window,
+weakened substantially, and traced to a one-ticker momentum regime rather than the
+cross-asset structure this sweep was designed to detect — exactly the kind of isolated hit
+this design exists to catch and correctly explain away.
 
 ## Two additional checks, run directly against the pooled run data
 
@@ -227,6 +265,86 @@ An event-conditioned burst-detection follow-on (do dependencies appear briefly a
 moves, rather than persist across the full sample?) was also run, at both daily and hourly
 resolution across three parameter settings. All three came back null as well.
 
+## Cross-sectional follow-up: Chronos-2 quantiles as alpha and as a risk model
+
+The directional-accuracy null above asks whether Chronos-2 can call each ticker's direction. A portfolio manager asks something different: do its **quantile forecasts**, turned into cross-sectional signals, earn net alpha beyond standard factors, or make a better volatility model? This follow-up tested that question in [`forecasting/alpha_experiment/`](forecasting/alpha_experiment/README.md).
+
+**Setup.**
+- **Data:** a daily panel on the **main-session close** (18:40 closing auction). 47–70 point-in-time-eligible liquid names.
+- **Forecasts:** 21-quantile forecasts at every trading day.
+- **Books:** weekly-rebalanced, beta-neutral long-short and long-only books, with 5 bps costs plus borrow.
+- **Tests:** Fama-MacBeth and net spanning regressions against momentum / reversal / low-vol / AR(1) books. For volatility, QLIKE against intraday realized variance.
+- **Protocol:** a pre-registered one-shot 2024 test, then an improvement wave on 2021–2024 with a trial ledger (238 rows). The 2025–26 holdout was reserved for the risk study.
+
+**Result: the per-ticker null does not carry over to ranking, but the ranking skill is not tradable.**
+- **Real cross-sectional IC.** Chronos ranks stocks with IC 0.07–0.08 (t 6–7). In 2024 its IC (0.088–0.096) was higher than any classic signal's.
+- **Mostly known factors.** A linear "mimic" on cheap trailing statistics reproduces about 45% of the signal, and it *trades better* than Chronos: net Sharpe 2.0 vs 1.2.
+- **No net alpha.** The pre-registered 2024 net spanning-alpha leg failed (t −0.55; −0.97 on corrected data).
+- **Nothing tried changed that.** The 20-configuration sweep covered cross-learning (4 grouping schemes), past covariates (index, sector, futures), context 64–512, and residual / weekly / log-price targets. Its best net spanning t was 0.82 (cov_fut).
+- **Improvements on top of the winner didn't either.** Quantile-shape signals, combination with classic factors and turnover control were built afterwards. The best, an EMA-smoothed cov_fut signal, reached spanning t 1.46, still below 2. The winning configuration stays below 2 even at zero cost (t 1.71).
+- **The best configuration.** Covariates with Brent, USD/RUB and gold futures keep a Chronos-specific component beyond a mimic given the same inputs (Fama-MacBeth t 2.47, an upper bound since the mimic is linear). But:
+  - that component's own book loses money (net Sharpe −0.38);
+  - its weight in a combination with classic factors is about 0.002;
+  - a Bonferroni bound across the 20 configurations would need t ≈ 3.
+
+**Volatility: a good off-the-shelf model, matched by log-HAR.**
+- **Return-based width:** Chronos's forecast width from daily returns is no better than EWMA or GARCH(1,1), and its tails were too narrow in 2024 (6.7% q05 hits).
+- **Realized-variance target:** run on log realized variance, Chronos beats EWMA, GARCH and HAR (QLIKE 0.50 vs 0.65–0.85).
+- **But log-HAR matches it:** a pooled log-HAR with a market term reaches QLIKE 0.455 (DM t +0.78). Chronos's edge came from working in log space and pooling across names, not from anything a classical model cannot do.
+- **Distinct information, little practical gain:** a pre-registered encompassing test shows Chronos carries information log-HAR lacks (t 4.3), mostly in calm years. A fixed combination does not lower QLIKE, and no portfolio use showed an economic gain.
+
+**Next:** whether Chronos is useful for **risk** (VaR/ES, vol targeting, minimum-variance portfolios, hedging). See the risk follow-up below.
+
+## Risk follow-up: Chronos-2 for VaR, vol targeting, minimum-variance portfolios and hedging
+
+The alpha follow-up found Chronos-2 a good volatility model that log-HAR matches. The last open question was
+whether that makes it useful for **risk decisions**, and whether calibration, mixing with classical models,
+multivariate input, covariates or LoRA fine-tuning give it an edge. This study, in
+[`forecasting/risk_experiment/`](forecasting/risk_experiment/README.md), used the sealed 2025–26 holdout.
+
+**Setup.**
+- **Uses:** 1-day VaR/ES for every stock (FZ0 loss); vol targeting an equal-weight book to 10% (performance
+  fee); a long-only minimum-variance portfolio (realized variance); hedging each stock with the IMOEX future
+  (hedged variance).
+- **Arms:** zero-shot Chronos on returns, log realized variance and both jointly; calibrated and FHS versions;
+  fixed, fitted and regime-dependent mixtures with the best classical model; a one-factor covariance model;
+  market/macro covariates; and LoRA fine-tuning on Colab with yearly refits trained only on past data.
+  Classical rivals: RiskMetrics/EWMA, GARCH(-t), FHS, HAR and log-HAR variants, rolling OLS beta.
+- **Protocol:** all selection on 2021–24 (265 trials in the ledger), then a pre-registration committed before
+  any holdout forecast existed, then one evaluation on 2025-01 → 2026-09. Claims were "better than" (beats
+  EWMA and GARCH, then the best classical model, Holm-corrected) and "not worse" (non-inferiority against the
+  best classical model with margins fixed on dev).
+
+**Result: parity with the best classical risk models, no demonstrated advantage.**
+- **Not worse, confirmed.** For VaR/ES and hedging, Chronos (mixed with a classical model) is not meaningfully
+  worse than the best classical model (non-inferiority p 8e-17 and 8e-6), and has the best point estimate in
+  both (FZ0 −3.082 vs −3.070 for FHS log-HAR; hedged vol 31.13% vs 31.30% for rolling OLS beta).
+- **Not better.** No "better than" claim survives the Holm correction. The closest: the VaR arm beats
+  RiskMetrics and GARCH-t at raw p 0.031 (threshold 0.010).
+- **Minimum-variance portfolios:** plain EWMA stays best (16.85% vs 17.74% annual vol for Chronos).
+- **Vol targeting:** the Chronos one-factor book earns +243 bps/yr over EWMA but trails GARCH and a log-HAR
+  portfolio model.
+
+**The dev period over-stated Chronos, and the holdout caught it.**
+- **Calm-day VaR:** Chronos beat FHS log-HAR on calm days with dev t −4.0; the pre-registered holdout claim gave
+  t −1.3 (p 0.095). A winner's curse from picking the best of 265 variants.
+- **Fine-tuning:** multivariate LoRA fine-tuning (returns and log-RV jointly) beat zero-shot Chronos in 21 of 22
+  arms on 2022–24. On the holdout the VaR gain reversed sign (t +1.07) and the GMV gain was insignificant.
+  Fine-tuning on log-RV alone never helped.
+- **Regimes:** "better in calm, worse in stress" held on dev; on the holdout it reversed for GMV.
+
+**Engineering lessons worth keeping.**
+- An evaluation that requires every arm to exist on a date silently dropped the 2022 crash months, because the
+  regime mixtures had no values there. It was found by a dry run of the holdout code and fixed before the
+  holdout opened (all dev tables re-scored, trials not re-counted).
+- A median-based calibration of single-series forecasts is biased for χ²-like ratios (vol-targeted books ran at
+  18–20% instead of 10%); it uses a rolling mean now.
+- Fine-tuned forecasts start only in 2022, so they were spliced onto their zero-shot twins before 2022; otherwise
+  every calibrated or mixed arm would have been undefined during the crash.
+
+**Bottom line across the three studies:** Chronos-2 has no directional edge, no tradable alpha, and for risk it
+reaches, but does not beat, the best classical tools, at a much higher compute cost.
+
 ## Fine-tuning (parallel track, paused)
 
 A separate track fine-tuned Chronos-2 on the same MOEX panel via AutoGluon's
@@ -236,7 +354,23 @@ AutoGluon index-alignment bug. Given the zero-shot results above and the real ov
 leakage risk that fine-tuning for directional accuracy would carry without its own
 dedicated held-out design, this track was deliberately paused rather than pushed through —
 not published in this repository (kept local, working but incomplete), and named here as a
-scoped decision rather than a hidden loose end.
+scoped decision rather than a hidden loose end. Fine-tuning was later done properly for the risk
+follow-up (LoRA, yearly refits trained only on past data, its own held-out design); see *Risk follow-up*.
+
+## Data caveats for the results above
+
+Audits in the follow-up found issues that also touch the inputs of the experiments reported earlier in this document. Their recorded results were **not recomputed**.
+- **The daily close is the evening print.** The `candles_1d` close is the evening-session last print (~23:40 MSK), not the main-session close. It matches the main close on only 0.2–1.2% of days in 2021, 2023 and 2024, and on about half the days in 2020 and 2022. The daily-resolution experiments above used it.
+  - This is not a leak: all series are consistently timed.
+  - It does mean the "close" in those tests is an evening-session print, not the main-session close a daily strategy would realistically trade at.
+  - The follow-up uses the main-session close from 10-minute bars.
+- **Dividend adjustment was one trading day late before 2023-07-31.** The poptimizer `day` field is the record date, not the ex-date. Under T+2 settlement this left a spurious −div / +div pair around every pre-T+1 dividend: for yields above 2% the mean was −5.0% then +6.8%, and the worst case was GAZP 2022-10 at −20.7% then +36.8%. Also fixed:
+  - five dividends missing from the source were added;
+  - one unpaid dividend (MGNT 2025-01) was removed;
+  - record dates after the data end are no longer applied.
+
+  Every `close_adj`-based result above (e.g. the lead-lag confirmation on `close_adj`) was computed on the uncorrected series.
+- **Holiday rows.** The earlier pipeline puts each series on a regular grid with forward-fill (`to_regular_series` / `build_price_panel` in `forecasting/lib.ipynb`), so market holidays on that grid become zero-return rows. The follow-up uses an exchange-derived calendar with no forward-fill. The effect on the earlier directional-accuracy results was not measured.
 
 ## Limitations and future work
 
@@ -247,10 +381,10 @@ scoped decision rather than a hidden loose end.
   whether a deployable strategy exists. A basket-wide null does not by itself rule out a
   narrow, regime-specific edge too small for these test families to detect at the sample
   sizes used.
-- **Calibration/volatility fine-tuning**, as opposed to directional fine-tuning, remains an
-  open, more promising direction: Chronos-2's quantile output could in principle be
-  recalibrated for volatility forecasting without the same overfitting risk directional
-  fine-tuning carries. Not attempted here.
+- **Calibration/volatility use and fine-tuning** were the open direction here, and have since been
+  tested: see *Cross-sectional follow-up* (Chronos on realized variance is strong but matched by log-HAR)
+  and *Risk follow-up* (calibrated, mixed and LoRA fine-tuned Chronos reaches, but does not beat, the best
+  classical risk models on a pre-registered holdout).
 
 ## Engineering notes
 

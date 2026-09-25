@@ -30,8 +30,20 @@ months of daily candles.
 
 385 scorable windows (more than either original run). UNAC's DA dropped from 0.60–0.64 to
 0.545–0.569, and none of its four horizons survived BH correction (best p_bh=0.26, nowhere
-near 0.05). No other ticker in the 18-ticker family came back significant either — a clean
-basket-wide null, consistent with every other result in this project.
+near 0.05). No other ticker in the 18-ticker family came back significant either.
+
+0.545–0.569 is still the top 4 cells out of 72 tested, so "not BH-significant" alone isn't a
+full explanation — it was checked further rather than left there. Two things closed it:
+(1) under a pure global null, the chance that *some* cell among 72 looks this extreme by pure
+luck is ≈44% (from the single best cell's raw p≈0.008), so this level of result is a
+plausible, unremarkable draw from noise, not something that requires a real effect to explain;
+and (2) the mechanism is directly identifiable in UNAC's own price series — a lag-1 return
+autocorrelation of 0.222 in the original confirmation window (vs. 0.054–0.068 elsewhere),
+driven by a real +157% spike in August 2023 followed by a ~9-month one-directional unwind. A
+zero-information "yesterday's sign predicts h=2 sign" rule tracks the same rise-and-fall
+pattern Chronos showed (0.535 in the confirmation window → 0.478, below chance, in the
+holdout). This points to a transient, idiosyncratic momentum regime in UNAC's own history,
+not a cross-asset lead-lag dependency — which is what this test family was built to detect.
 
 Full numbers, reasoning, and how this fits into the project's overall findings are in
 [FINDINGS.md](../../FINDINGS.md).

@@ -20,10 +20,19 @@
 # on new data would not detect that; running the whole family lets a fresh BH correction
 # be applied exactly as it was in the original confirmation run.
 #
-# RESULT (2026-09-18, run complete): NULL -- confirms the ctx=100 anomaly was a false
-# positive. 385 windows, UNAC DA dropped from 0.60-0.64 (original ctx=100 confirmation) to
-# 0.545-0.569 here, best p_bh=0.26 (not significant), and no other ticker in the family
-# came back significant either. Required extending data_pipeline's pull (config.md's
+# RESULT (2026-09-18, run complete): NULL, WITH MECHANISM IDENTIFIED. 385 windows, UNAC DA
+# dropped from 0.60-0.64 (original ctx=100 confirmation) to 0.545-0.569 here -- still the
+# top 4 cells of 72 tested, so this wasn't dismissed on p_bh=0.26 alone. Two follow-up
+# checks close it: (1) base rate -- under a pure global null, P(>=1 of 72 cells this
+# extreme) ~= 44%, so this level of result is unremarkable noise, not something needing a
+# real effect; (2) mechanism -- UNAC's own lag-1 return autocorrelation was 0.222 in the
+# original confirmation window (vs 0.054-0.068 elsewhere), driven by a real +157% spike in
+# Aug 2023 and its ~9-month one-directional unwind. A zero-information "yesterday's sign
+# predicts h=2 sign" rule tracks the exact same rise-fall pattern Chronos showed (0.535 in
+# confirmation -> 0.478, below chance, in this holdout). Conclusion: a transient,
+# idiosyncratic momentum regime in UNAC's own price history, not a cross-asset lead-lag
+# dependency -- what this test family was actually built to detect. No other ticker in the
+# family came back significant either. Required extending data_pipeline's pull (config.md's
 # period.end widened from 2024-12-31 to today) to fetch 2025-2026 data. Full writeup in
 # ../../../FINDINGS.md's lead-lag confirmation section; see README.md in this folder.
 stage_id: leadlag_confirm_adj_ctx100_holdout2025
