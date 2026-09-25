@@ -29,9 +29,10 @@ break-even after trading costs.
   2026-09 window. It fell to 0.545–0.569 (p_bh 0.26), and was traced to a one-ticker momentum regime, not a
   cross-asset dependency.
 
-Chance-level DA (≈ 0.49–0.51) throughout, and 10-minute returns show no autocorrelation for the model to have
-missed. The value of this study is that the process demonstrably could have caught an edge; the next question
-was whether Chronos's forecast *distribution*, rather than its direction, carries usable information.
+Chance-level DA throughout (mean 0.46–0.51 per run; below 0.5 where zero returns are common, because a zero
+return counts as a miss), and 10-minute returns show no autocorrelation for the model to have missed. The
+value of this study is that the process demonstrably could have caught an edge; the next question was whether
+Chronos's forecast *distribution*, rather than its direction, carries usable information.
 
 ## 2. Cross-sectional alpha: Chronos-2 quantiles as signals and as a volatility model
 

@@ -42,7 +42,10 @@ and "good at forecasting returns" is why this project exists rather than trustin
 
 **Why the bar is ~0.536 DA, not 0.5.** A directional bet with round-trip cost `c` and move size `m` has positive
 expected value only when the hit rate `p > 0.5 + c/(2m)`. With `c ≈ 0.10%` and `m ≈ 1.4%`, `p* ≈ 0.536`. So the
-chance-level DA seen throughout (≈0.49–0.51) is a clean failure, not a near-miss.
+chance-level DA seen throughout is a clean failure, not a near-miss. Mean DA per run is 0.46–0.51
+([`results/`](results/README.md)): a zero realized return counts as a miss, so where zero returns are common the
+no-skill level is below 0.5 (6.8% of 10-minute bars in the 2023 basket window, no-skill DA ≈ 0.47, observed
+0.459), which makes the binomial tests against 0.5 conservative.
 
 **Evaluation.** Walk-forward: for each config, up to 400 non-overlapping-anchor windows, each a real forecast
 scored against realized returns at the configured horizons. Per (ticker, horizon) cell: DA with binomial p-value
