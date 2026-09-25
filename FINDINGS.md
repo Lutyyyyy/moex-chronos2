@@ -193,3 +193,7 @@ forecast date, against closed-form or small-regression classical models).
 - **Power:** the 2025–26 holdout is short; "not significant" in the superiority tests was the expected outcome for
   most uses, which is why non-inferiority was pre-registered alongside them.
 - **Pretraining overlap:** it is unknown whether MOEX series were in Chronos-2's training data.
+- **Untested: ticker grouping for the joint mode.** The risk study ran the joint [return, log-RV] forecast
+  with cross-learning over all eligible stocks only. Studies 1 and 2 varied grouping (sectors, liquidity,
+  random groups, market series) without a gain in direction or net alpha, so little is expected; a real test needs one grouping chosen
+  in advance (e.g. each stock with the IMOEX future, for hedging) and a fresh holdout.

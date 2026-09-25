@@ -31,6 +31,11 @@ until the end, and the held-out data overturned two promising dev-period results
   looks better than it is.
 - **LoRA fine-tuning:** better than zero-shot in 21 of 22 dev arms → reversed sign for VaR on the holdout.
 
+**What mattered in the model setup.** The forecast target and the use of the output, not how series are
+grouped: log realized variance rather than returns, and a 50/50 mix with a classical model. Cross-ticker
+attention did not help direction, ranking or VaR, and joint return + variance forecasting helped VaR slightly
+while hurting volatility forecasts ([FINDINGS, section 4](../FINDINGS.md#4-which-chronos-2-modes-worked)).
+
 ## How it was done
 - **Data engineering** (MOEX AlgoPack, own pipeline with tests):
   - the daily "close" in the feed is an evening-session print, so prices are rebuilt from main-session
