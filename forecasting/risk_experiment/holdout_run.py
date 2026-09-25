@@ -361,6 +361,32 @@ def report_twins(period: str) -> pd.DataFrame:
     return T
 
 
+def report_coverage(period: str) -> pd.DataFrame:
+    """U1 VaR coverage of the frozen and reference arms at 5% on the confirmatory universe (reported, not
+    claimed): pooled hit rate, Kupiec p, share of names rejected by Christoffersen independence."""
+    if period == "holdout" and not (rr.OUT / "holdout" / "results.json").exists():
+        raise SystemExit("run the single confirmatory evaluation first (plan J)")
+    D, S, inb, ine = setup(period)
+    A = build_arms(period, D, inb)
+    y1 = D["ret"].shift(-1)
+    names = (FROZEN["U1"]["C"], FROZEN["U1"]["B"], *FROZEN["U1"]["refs"])
+    M = D["eligible"] & ine & y1.notna()
+    for k in names:
+        M &= A[k][0].lt(0) & A[k][1].lt(A[k][0])
+    rows = []
+    for k in names:
+        hits = (y1 < A[k][0]).where(M)
+        h = hits.stack().dropna().to_numpy()
+        rows.append({"arm": k, "hit_rate": float(h.mean()), "kupiec_p": rl.kupiec(h, 0.05)["p"], "n_obs": int(h.size),
+                     "christoffersen_reject_share": float(np.mean([rl.christoffersen(hits[t].dropna().to_numpy(), 0.05)["p_ind"] < 0.05
+                                                                   for t in hits.columns if hits[t].notna().sum() > 100]))})
+    T = pd.DataFrame(rows)
+    out_dir = rr.OUT / ("dryrun" if period == "dev" else "holdout")
+    T.to_csv(out_dir / "coverage_report.csv", index=False)
+    print(T.to_string())
+    return T
+
+
 def main(mode: str):
     if mode == "sources":
         return stage_sources()
@@ -369,7 +395,9 @@ def main(mode: str):
     if mode in ("report_dev", "report"):
         if mode == "report" and not unlocked():
             raise SystemExit("holdout locked")
-        return report_twins("dev" if mode == "report_dev" else "holdout")
+        per = "dev" if mode == "report_dev" else "holdout"
+        report_coverage(per)
+        return report_twins(per)
     if mode == "evaluate" and not unlocked():
         raise SystemExit("holdout locked: needs HOLDOUT_UNLOCK=1 and a committed pre-registration block")
     period = "dev" if mode == "dryrun" else "holdout"

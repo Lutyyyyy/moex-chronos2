@@ -52,7 +52,8 @@ def forest(C: pd.DataFrame, period: str, out: Path):
 
 
 def regimes(C: pd.DataFrame, period: str, out: Path):
-    """Best Chronos arm vs best classical arm, pooled / calm / stress."""
+    """Best Chronos arm vs best classical arm, pooled / calm / stress, as Newey-West t-statistics (scale-free,
+    so dev and holdout are comparable; |t| > 1.96 is significant at 5% two-sided)."""
     first = C[C["use"].isin(USES)].groupby("use").head(1)[["use", "arm", "ref"]]
     fig, ax = plt.subplots(figsize=(7.5, 3.8))
     offs = {"pooled": -0.2, "calm": 0.0, "stress": 0.2}
@@ -60,12 +61,14 @@ def regimes(C: pd.DataFrame, period: str, out: Path):
     for i, (_, r) in enumerate(first.iterrows()):
         for reg, o in offs.items():
             x = C[(C["use"] == r["use"]) & (C["arm"] == r["arm"]) & (C["ref"] == r["ref"]) & (C["regime"] == reg)].iloc[0]
-            ax.errorbar(i + o, x["diff_pct"], yerr=[[x["diff_pct"] - x["lo_pct"]], [x["hi_pct"] - x["diff_pct"]]],
-                        fmt="o", color=cols[reg], capsize=3, label=reg if i == 0 else None)
-    ax.axhline(0, color="grey", lw=1, ls="--")
+            t = x["diff_pct"] / ((x["hi_pct"] - x["lo_pct"]) / (2 * 1.96))
+            ax.bar(i + o, t, width=0.18, color=cols[reg], label=reg if i == 0 else None)
+    for y in (-1.96, 1.96):
+        ax.axhline(y, color="grey", lw=0.8, ls=":")
+    ax.axhline(0, color="grey", lw=1)
     ax.set_xticks(range(len(first)))
     ax.set_xticklabels([f"{u}\n{nice(a)}\nvs {nice(b)}" for u, a, b in first.itertuples(index=False)], fontsize=7)
-    ax.set_ylabel("loss difference, % (below 0 = Chronos better)", fontsize=8)
+    ax.set_ylabel("t-statistic of the loss difference\n(below 0 = Chronos better; dotted = ±1.96)", fontsize=8)
     ax.set_title(f"Best Chronos vs best classical by regime, MOEX {period}", fontsize=10)
     ax.legend(fontsize=8)
     fig.tight_layout()

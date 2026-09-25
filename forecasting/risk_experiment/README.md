@@ -132,9 +132,82 @@ U2 fees with bootstrap CIs.
 - **Pretraining overlap:** it is unknown whether MOEX series were in Chronos-2's pretraining data.
 <!-- PREREG_END -->
 
-## Holdout results
+## Holdout results (opened once, 2026-09-25)
 
-_Pending: written here after the single holdout evaluation._
+Evaluated once with the code committed at `7b93e90`; the confirmatory code is unchanged since the
+pre-registration commit `e0f0c45`. Raw output: [`results/holdout/results.json`](results/holdout/results.json).
+
+**Verdict: parity with the best classical risk models, no demonstrated advantage.** The two "not worse" claims
+pass by a wide margin; no "better than" claim survives the Holm correction, including the calm-day claim.
+
+![Holdout: Chronos vs classical](../../docs/figures/risk_holdout_forest.png)
+
+### Confirmatory claims
+
+| Claim | Holdout statistic | Raw p | After Holm |
+|---|---|---|---|
+| **Not worse, U1** VaR/ES (δ 0.0630 FZ0) | mean(C − B) −0.012, upper 95% bound +0.003 | 8e-17 | ✅ pass |
+| **Not worse, U4** hedging (δ +0.5 pp vol) | mean(C − B) −2.0e-5, upper bound 1.3e-5 (δ 6.6e-5) | 8e-6 | ✅ pass |
+| L1 U1: beats RiskMetrics and GARCH-t | t −1.87 / −2.37 | 0.031 | ❌ (needs ≤ 0.010) |
+| R: U1 beats FHS log-HAR on calm days | t −1.31 (381 calm days) | 0.095 | ❌ |
+| L1 U2: beats EWMA and GARCH (fee) | +243 bps (p 0.03) / −72 bps (p 0.71) | 0.713 | ❌ |
+| L1 U3: beats EWMA and GARCH | t +1.40 / −0.67 | 0.920 | ❌ |
+| L1 U4: beats EWMA and GARCH | t −0.06 / −2.10 | 0.477 | ❌ |
+| L2 (any use) | not tested: no L1 passed | — | — |
+
+### Losses per use
+
+| Use | Chronos arm (C) | Best classical (B) | References |
+|---|---|---|---|
+| U1 FZ0 (lower is better) | **−3.0819** | −3.0697 (C − B: t −1.34) | GARCH-t −3.0426, RiskMetrics −3.0317 |
+| U1 5% VaR hit rate (Kupiec p) | 4.77% (0.056) | 4.98% (0.90) | RiskMetrics 5.35% (0.004), GARCH-t 5.65% (1e-7) |
+| U2 fee of C vs each arm (bps/yr) | — | −128 vs log-HAR on portfolio RV | +243 vs EWMA, −72 vs GARCH |
+| U3 GMV annual vol | 17.74% | **EWMA 16.85%** | GARCH 18.29% |
+| U4 hedged annual vol | **31.13%** | OLS beta 31.30% (C − B: t −1.01) | EWMA 31.14%, GARCH 31.62% |
+
+### Regimes (secondary: no pooled claim passed, so nothing is claimed)
+
+![Holdout: by regime](../../docs/figures/risk_holdout_regimes.png)
+
+- **U1:** Chronos is ahead of FHS log-HAR on calm days (t −1.31) and on stress days (t −0.35); both are
+  insignificant. The dev calm-day effect (t −4.0) shrank to a third, which is the expected winner's curse of
+  picking the best of 265 dev variants.
+- **U3:** the dev pattern reversed. Chronos is worse than EWMA on calm days (t +2.79) and better on stress
+  days (t −1.60; Giacomini-White p 0.012).
+- **U4:** no regime difference (GW p 0.54).
+- "Chronos is better in calm markets" does not hold as a general rule.
+
+### Reported, not claimed
+- **Fine-tuned vs zero-shot (F2 vs N1, [`results/holdout/twins_report.csv`](results/holdout/twins_report.csv)):**
+  the dev gain did not replicate for VaR (mix t +1.07, raw +0.34: F2 slightly worse). For GMV it keeps the dev
+  direction but is insignificant (mix t −0.57, raw −0.63). Fine-tuning shows no demonstrated gain.
+- **VaR coverage** ([`results/holdout/coverage_report.csv`](results/holdout/coverage_report.csv)): the table
+  above; Christoffersen independence rejected for 15% of names for C and 12% for B.
+- **Not produced:** the other items listed under "Reported but not claimed" (calibrated vs raw, mixture vs
+  components, N1 vs Z1/Z2, N4 vs daily, N5/N6 vs Z3, per-year descriptives, U2 fee CIs). Procedure step 2
+  limited the holdout sources to those of the frozen arms, so their inputs were never generated; the two
+  sections of the pre-registration conflicted, and step 2 was followed.
+
+### Notes and deviations
+- **Start date:** the pre-registration says the holdout starts 2025-01-02; the first trading day in the
+  panel is 2025-01-03. The day count (434) is correct.
+- **Dates per use:** U1 uses 433 forecast dates (1-day horizon), U2/U3 429 (5-day horizon), U4 395 (windows
+  containing an MX futures roll are dropped for all arms).
+- **Extra source (plan J):** zero-shot N1 holdout forecasts were generated after the pre-registration for the
+  F2-vs-zero-shot report only; the twin and coverage reports are separate, report-only code (additions only).
+- **Fine-tuned holdout folds:** 2025 (trained ≤ 2024, lr 1e-4) and 2026 (trained ≤ 2025, lr 3e-5), both
+  checked for exact coverage of every eligible stock-day before scoring
+  ([`results/holdout/ft_records_holdout.csv`](results/holdout/ft_records_holdout.csv)).
+
+### What this study shows
+- A pretrained foundation model, zero-shot or lightly fine-tuned and mixed with a classical model, reaches
+  the level of the best classical risk models on MOEX: not worse for VaR/ES and hedging, with the best point
+  estimate in both, but no significant advantage in any use.
+- On dev, mixing with a classical model is what made Chronos competitive (not re-tested on the holdout).
+  Calibration, covariates and the correlation-side model showed no gain on dev, and the dev gain from
+  multivariate fine-tuning did not replicate on the holdout.
+- Dev-period advantages (calm-day VaR, fine-tuning) shrank or vanished on the holdout, as expected after
+  265 trials. Without the holdout, this study would have reported them as findings.
 
 ## Code
 - [`risk_run.py`](risk_run.py): dev stages (sources, arms, evaluation per use, N5, N6, fine-tuned arms).
