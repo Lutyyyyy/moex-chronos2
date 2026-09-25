@@ -277,9 +277,99 @@ def stage_sources():
     print({k: len(pd.read_parquet(holdout_source_path(k))) for k in SOURCES})
 
 
+# ── reported, not claimed (plan J): fine-tuned F2 vs its zero-shot twin N1. Separate from the confirmatory
+# code above, which is unchanged since the PREREG commit ────────────────────────────────────────────────
+REPORT_SOURCES = ("N1",)
+
+
+def stage_sources_report():
+    """Holdout N1 forecasts (zero-shot twin of F2), for the descriptive twin report only."""
+    if not unlocked():
+        raise SystemExit("holdout locked: needs HOLDOUT_UNLOCK=1 and a committed pre-registration block")
+    import torch
+    import alpha_run as R
+    torch.set_num_threads(4)
+    D = rr.load_panel(rr.FULL_PANEL, ("ret", "rv", "eligible"))
+    anchors = rr.span(D["ret"].index, rr.HOLDOUT)
+    block, stride, ctx, H = rr.SOURCES["N1"]
+    f = holdout_source_path("N1")
+    if not f.exists():
+        pipe = R.load_pipeline()
+        cs.generate_multivariate(pipe, cs.rv_panels(D["ret"], D["rv"], block=block), D["eligible"], anchors,
+                                 ctx=ctx, H=H, stride=stride, cross_learning=True, out_path=f, holdout_unlock=True)
+    ft = pd.read_parquet(f)
+    check_f_holdout("F2", ft, D["eligible"])                             # N1 has F2's variates: same exact coverage
+    print("N1 holdout rows:", len(ft))
+
+
+def report_twins(period: str) -> pd.DataFrame:
+    """F2 vs N1, arm by arm (frozen U1/U3 arms and their raw Chronos parts), each pair scored on the eval span
+    where both are valid. Descriptive: one-sided DM p is shown for information, no claim is attached."""
+    if period == "holdout" and not (rr.OUT / "holdout" / "results.json").exists():
+        raise SystemExit("run the single confirmatory evaluation first (plan J)")
+    D, S, inb, ine = setup(period)
+    A = build_arms(period, D, inb)
+    ret, rv, cal, cols = D["ret"], D["rv"], D["ret"].index, D["ret"].columns
+    y1, steps = ret.shift(-1), (1, 2, 3, 4, 5)
+    n1 = pd.read_parquet(rr.SRC["N1"])
+    if period == "holdout":
+        h = pd.read_parquet(holdout_source_path("N1"))
+        n1 = pd.concat([n1[n1["anchor"] < pd.Timestamp(rr.HOLDOUT[0])], h], ignore_index=True)
+    f2 = load_sources(period, D["eligible"])["F2"]
+    rows = []
+    # U1: FZ0 at 5%
+    V, E = A["fhs_loghar"]
+    u1 = {}
+    for tag, P in (("F2", f2), ("N1", n1)):
+        Vc, Ec = ra.chronos_vares(P, (0.05,), cal, cols, variate="ret", h=1)[0.05]
+        u1[f"chr_{tag}ret"] = (Vc, Ec)
+        u1[f"mixeq_chr_{tag}ret"] = (rl.vincentize([Vc, V], [0.5, 0.5]), rl.vincentize([Ec, E], [0.5, 0.5]))
+    for a, b in (("mixeq_chr_F2ret", "mixeq_chr_N1ret"), ("chr_F2ret", "chr_N1ret")):
+        M = D["eligible"] & ine & y1.notna()
+        for k in (a, b):
+            M &= u1[k][0].lt(0) & u1[k][1].lt(u1[k][0])
+        la, lb = rl.fz0_panel(y1, *u1[a], M, 0.05), rl.fz0_panel(y1, *u1[b], M, 0.05)
+        rows.append({"use": "U1", "arm": a, "twin": b, "loss": float(la.mean()), "loss_twin": float(lb.mean()),
+                     **{f"dm_{k}": v for k, v in dm(la, lb).items()}, "n_dates": len(la)})
+    # U3: GMV realized variance
+    Vc5 = rr.classical_vol_panel(D)
+    vol = {}
+    for tag, P in (("F2", f2), ("N1", n1)):
+        c = ra.chronos_rv(P, steps, cal, cols, variate="logrv")
+        vol[f"chr_{tag}rv"] = c
+        vol[f"mixeq_chr_{tag}rv"] = rl.geo_mix([c, Vc5["loghar_pooled_mkt"]], [0.5, 0.5])
+    R5 = ra.forward_simple_return(ret, steps)
+    rf = D["bench"]["rf"].reindex(cal)
+    rf5 = np.expm1(sum(np.log1p(rf.shift(-h)) for h in steps))
+    U = D["eligible"] & ine & R5.notna()
+    for v in vol.values():
+        U &= v.gt(0)
+    dates = U.index[U.sum(axis=1) >= 10]
+    ec = al.ewma_corr(ret)
+    corr = {d: pd.DataFrame(C, index=ec["cols"], columns=ec["cols"]) for d, C in ec["C"].items() if d in set(dates)}
+    paths = ra.portfolio_paths(vol, corr, R5, rf5, U, dates, rr.VT_TARGET_ANNUAL * np.sqrt(5 / 252))
+    for a, b in (("mixeq_chr_F2rv", "mixeq_chr_N1rv"), ("chr_F2rv", "chr_N1rv")):
+        la, lb = paths[a]["gmv"] ** 2, paths[b]["gmv"] ** 2
+        rows.append({"use": "U3", "arm": a, "twin": b, "loss": float(np.sqrt(la.mean() * 252 / 5)),
+                     "loss_twin": float(np.sqrt(lb.mean() * 252 / 5)), **{f"dm_{k}": v for k, v in dm(la, lb).items()},
+                     "n_dates": len(la)})
+    T = pd.DataFrame(rows)
+    out_dir = rr.OUT / ("dryrun" if period == "dev" else "holdout")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    T.to_csv(out_dir / "twins_report.csv", index=False)
+    print(T.to_string())
+    return T
+
+
 def main(mode: str):
     if mode == "sources":
         return stage_sources()
+    if mode == "sources_report":
+        return stage_sources_report()
+    if mode in ("report_dev", "report"):
+        if mode == "report" and not unlocked():
+            raise SystemExit("holdout locked")
+        return report_twins("dev" if mode == "report_dev" else "holdout")
     if mode == "evaluate" and not unlocked():
         raise SystemExit("holdout locked: needs HOLDOUT_UNLOCK=1 and a committed pre-registration block")
     period = "dev" if mode == "dryrun" else "holdout"
