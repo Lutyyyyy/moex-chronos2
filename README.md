@@ -11,6 +11,8 @@ the test data was touched and a holdout period opened only at the end.
 | **2. Return alpha** ([alpha_experiment](forecasting/alpha_experiment/README.md)) | Do its quantile forecasts rank stocks well enough for a profitable long-short book? | **No tradable alpha.** The rank IC is real (0.07 on 2021–23, 0.09 on 2024), but it is mostly known factors (low-vol, momentum, AR(1)) in disguise. The Chronos-specific part has net Sharpe −0.38 and no spanning alpha. |
 | **3. Risk** ([risk_experiment](forecasting/risk_experiment/README.md)) | Does it help with VaR/ES, vol targeting, minimum-variance portfolios or hedging? | **Parity, no advantage** (pre-registered holdout 2025–26). Not worse than the best classical model for VaR/ES and hedging (both non-inferiority claims pass, p < 1e-5), with the best point estimate in both, but no "better than" claim survives the multiple-testing correction. Dev-period edges (calm-day VaR, LoRA fine-tuning) shrank or vanished out of sample. |
 
+Short version: **[docs/summary.md](docs/summary.md)** (two pages).
+
 ![Chronos vs classical risk models, holdout](docs/figures/risk_holdout_forest.png)
 
 _Risk study, holdout 2025-01 → 2026-09 (opened once): loss difference of the frozen Chronos arm vs the best
@@ -51,7 +53,7 @@ forecasting/
   holdout_unac_experiment/         study 1: 2025 holdout confirmation
   alpha_experiment/                study 2: code, tests, pre-registration, results/
   risk_experiment/                 study 3: code, tests, Colab LoRA bundle builder, results/
-docs/                     figures, design notes (lead-lag research), archive
+docs/                     2-page summary (summary.md), figures, design notes (lead-lag research), archive
 ```
 
 An earlier fine-tuning attempt through AutoGluon was paused and is not part of this repo (see
