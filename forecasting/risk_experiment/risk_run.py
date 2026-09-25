@@ -509,14 +509,22 @@ def evaluate_u1(arms: dict, D, S, mask1, new: set | None = None, tag: str = "R4_
         names = [k for k, v in arms.items() if alpha in v]
         M = mask1.copy()
         M_old = mask1.copy()
+        M_avail = mask1.copy()                                          # new arms counted for availability only
         for k in names:
             V, E = arms[k][alpha]
             if gates(k):
                 M &= V.lt(0) & E.lt(V)
                 if not new or k not in new:
                     M_old &= V.lt(0) & E.lt(V)
+                else:
+                    M_avail &= V.notna() & E.notna()
         if new:
-            _same_universe(M, M_old, f"U1 alpha={alpha}")
+            # refuse only drops caused by MISSING new-arm forecasts (plan H); cells where a finite new forecast
+            # is outside the FZ0 domain (ES < VaR < 0) are dropped for every arm, as in the FZ0 rule (plan I-amendment)
+            _same_universe(M_old & M_avail, M_old, f"U1 alpha={alpha}")
+            dom = int((M_old & M_avail & ~M).sum().sum())
+            if dom:
+                print(f"U1 alpha={alpha}: {dom} cell(s) dropped for all arms (new-arm forecast outside the FZ0 domain)", flush=True)
         Mk = {k: M if gates(k) else M & arms[k][alpha][0].lt(0) & arms[k][alpha][1].lt(arms[k][alpha][0]) for k in names}
         Ls = {k: rl.fz0_panel(y1, *arms[k][alpha], Mk[k], alpha) for k in names}
         if losses_out is not None:
