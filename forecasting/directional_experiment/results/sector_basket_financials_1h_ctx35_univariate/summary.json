@@ -1,0 +1,13 @@
+{
+  "stage_id": "sector_basket_financials_1h_ctx35_univariate",
+  "group_mode": "univariate",
+  "n_windows": 400,
+  "mean_da_primary": 0.5088095238095237,
+  "median_da_primary": 0.515,
+  "cells_signif_05": 0,
+  "mean_pearson_primary": 0.026487742159480493,
+  "mean_coverage_primary": 0.8178571428571428,
+  "trend2_n_signals": 2265,
+  "trend2_acc_both": 0.269757174392936,
+  "trend2_acc_cum": 0.5090507726269315
+}

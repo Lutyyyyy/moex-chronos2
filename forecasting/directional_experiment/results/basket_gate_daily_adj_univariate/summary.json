@@ -1,0 +1,13 @@
+{
+  "stage_id": "basket_gate_daily_adj_univariate",
+  "group_mode": "univariate",
+  "n_windows": 400,
+  "mean_da_primary": 0.4846354166666667,
+  "median_da_primary": 0.48875,
+  "cells_signif_05": 0,
+  "mean_pearson_primary": -0.05345906744529335,
+  "mean_coverage_primary": 0.7869791666666668,
+  "trend2_n_signals": 4397,
+  "trend2_acc_both": 0.23447805321810325,
+  "trend2_acc_cum": 0.5121673868546737
+}

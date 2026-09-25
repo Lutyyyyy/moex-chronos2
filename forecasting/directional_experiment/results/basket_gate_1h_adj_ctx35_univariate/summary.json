@@ -1,0 +1,13 @@
+{
+  "stage_id": "basket_gate_1h_adj_ctx35_univariate",
+  "group_mode": "univariate",
+  "n_windows": 400,
+  "mean_da_primary": 0.49890625000000005,
+  "median_da_primary": 0.50125,
+  "cells_signif_05": 0,
+  "mean_pearson_primary": 0.03512030289578447,
+  "mean_coverage_primary": 0.8167708333333333,
+  "trend2_n_signals": 5155,
+  "trend2_acc_both": 0.26052376333656646,
+  "trend2_acc_cum": 0.5125121241513094
+}

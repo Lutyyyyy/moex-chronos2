@@ -1,0 +1,13 @@
+{
+  "stage_id": "basket_gate_1h_adj_multivariate",
+  "group_mode": "multivariate",
+  "n_windows": 400,
+  "mean_da_primary": 0.4932291666666666,
+  "median_da_primary": 0.485,
+  "cells_signif_05": 0,
+  "mean_pearson_primary": -0.020693697676332792,
+  "mean_coverage_primary": 0.7922395833333334,
+  "trend2_n_signals": 5063,
+  "trend2_acc_both": 0.24807426427019555,
+  "trend2_acc_cum": 0.5083942326683785
+}

@@ -1,0 +1,13 @@
+{
+  "stage_id": "leadlag_confirm_1h_adj",
+  "group_mode": "multivariate",
+  "n_windows": 400,
+  "mean_da_primary": 0.4938194444444444,
+  "median_da_primary": 0.49624999999999997,
+  "cells_signif_05": 0,
+  "mean_pearson_primary": -0.027749711610581772,
+  "mean_coverage_primary": 0.7800694444444445,
+  "trend2_n_signals": 4054,
+  "trend2_acc_both": 0.2530833744449926,
+  "trend2_acc_cum": 0.5152935372471633
+}

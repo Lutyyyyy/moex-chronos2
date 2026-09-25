@@ -71,3 +71,4 @@ gp.md
 
 # --- Local market-data caches (ISS index/key-rate/futures pulls): raw data, never published ---
 forecasting/moex_cache/
+moex_cache/

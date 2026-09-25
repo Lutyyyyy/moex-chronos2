@@ -1,10 +1,13 @@
 # Study 1: directional accuracy of zero-shot Chronos-2
 
-Part of the MOEX × Chronos-2 project. The project-level synthesis is in [`../FINDINGS.md`](../FINDINGS.md); the
-two follow-up studies live in [`alpha_experiment/`](alpha_experiment/README.md) (cross-sectional alpha) and
-[`risk_experiment/`](risk_experiment/README.md) (risk). This folder's top level holds study 1: the runner
-[`run.ipynb`](run.ipynb), the cell library [`lib.ipynb`](lib.ipynb) and one YAML per run in [`configs/`](configs/)
-(71 configs).
+Part of the MOEX × Chronos-2 project. The project-level synthesis is in [`../../FINDINGS.md`](../../FINDINGS.md);
+the two follow-up studies are [`../alpha_experiment/`](../alpha_experiment/README.md) (cross-sectional alpha) and
+[`../risk_experiment/`](../risk_experiment/README.md) (risk). This folder holds study 1:
+- [`run.ipynb`](run.ipynb): the runner;
+- [`lib.ipynb`](lib.ipynb): the cell library;
+- [`configs/`](configs/): one YAML per run (71 configs);
+- [`results/`](results/README.md): per-run metrics for all 71 runs;
+- [`transient_dependency_research.md`](transient_dependency_research.md): the design document.
 
 **Headline result: a rigorous, replicated null.** Across ~10 independent axes (universe composition, time
 resolution (daily / 1h / 10m), grouping (multivariate vs. univariate attention), price adjustment (raw vs.
@@ -153,7 +156,7 @@ of the time, close to the 50% no-relationship baseline. There is no meaningful m
 
 ## What this doesn't rule out
 
-From the project's design document ([`docs/transient_dependency_research.md`](../docs/transient_dependency_research.md)):
+From the project's design document ([`transient_dependency_research.md`](transient_dependency_research.md)):
 none of these experiments rule out dependencies that exist only in short bursts, intraday delays that dissipate
 by the close, event- or regime-conditioned or nonlinear relationships, dependencies in volatility, volume or
 order flow rather than returns, lead/lag structure that changes across regimes, or anything outside the tickers,
@@ -164,13 +167,13 @@ large moves), run at daily and hourly resolution under three parameter settings,
 
 Open [`run.ipynb`](run.ipynb), point `CONFIG_PATH` at any file under [`configs/`](configs/) and run all cells. Each
 config is self-contained (tickers, dates, resolution, context length, baselines). It sources
-[`lib.ipynb`](lib.ipynb) and reads the processed AlgoPack panels produced by [`../data_pipeline/`](../data_pipeline/).
+[`lib.ipynb`](lib.ipynb) and reads the processed AlgoPack panels produced by [`../../data_pipeline/`](../../data_pipeline/).
 The 2025 UNAC holdout is
 [`configs/leadlag_confirm_adj_ctx100_holdout2025.yaml`](configs/leadlag_confirm_adj_ctx100_holdout2025.yaml).
 
 ## Data caveats for the results above
 
-Audits during the alpha study ([`alpha_experiment/`](alpha_experiment/README.md)) found issues that touch the inputs of the experiments above. Their recorded results were **not recomputed**.
+Audits during the alpha study ([`alpha_experiment/`](../alpha_experiment/README.md)) found issues that touch the inputs of the experiments above. Their recorded results were **not recomputed**.
 - **The daily close is the evening print.** The `candles_1d` close is the evening-session last print (~23:40 MSK), not the main-session close. It matches the main close on only 0.2–1.2% of days in 2021, 2023 and 2024, and on about half the days in 2020 and 2022. The daily-resolution experiments above used it.
   - This is not a leak: all series are consistently timed.
   - It does mean the "close" in those tests is an evening-session print, not the main-session close a daily strategy would realistically trade at.
@@ -187,11 +190,11 @@ Audits during the alpha study ([`alpha_experiment/`](alpha_experiment/README.md)
 
 An early attempt to fine-tune Chronos-2 for directional accuracy through AutoGluon was paused (an unresolved
 intraday index-alignment bug, and no dedicated held-out design) and is not in this repository. Fine-tuning was
-later done properly for the risk study ([`risk_experiment/`](risk_experiment/README.md)): LoRA, yearly refits trained only on past data, its own holdout.
+later done properly for the risk study ([`risk_experiment/`](../risk_experiment/README.md)): LoRA, yearly refits trained only on past data, its own holdout.
 
 ## Engineering notes
 
-The data pipeline ([`data_pipeline/`](../data_pipeline/)) that feeds this project is a
+The data pipeline ([`data_pipeline/`](../../data_pipeline/)) that feeds this project is a
 self-contained sibling project: it pulls MOEX AlgoPack candle, order-flow, and
 open-interest data into a reproducible, tested Parquet output, including a dividend/split
 price-adjustment step added mid-project after a data-quality check found no prior result

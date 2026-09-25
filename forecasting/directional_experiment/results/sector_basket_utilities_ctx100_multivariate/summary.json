@@ -1,0 +1,13 @@
+{
+  "stage_id": "sector_basket_utilities_ctx100_multivariate",
+  "group_mode": "multivariate",
+  "n_windows": 400,
+  "mean_da_primary": 0.4680208333333333,
+  "median_da_primary": 0.46875,
+  "cells_signif_05": 0,
+  "mean_pearson_primary": -0.02899124754272551,
+  "mean_coverage_primary": 0.810625,
+  "trend2_n_signals": 2361,
+  "trend2_acc_both": 0.21855146124523506,
+  "trend2_acc_cum": 0.4891994917407878
+}

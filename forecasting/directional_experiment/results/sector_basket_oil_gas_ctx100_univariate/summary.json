@@ -1,0 +1,13 @@
+{
+  "stage_id": "sector_basket_oil_gas_ctx100_univariate",
+  "group_mode": "univariate",
+  "n_windows": 400,
+  "mean_da_primary": 0.48354166666666665,
+  "median_da_primary": 0.485,
+  "cells_signif_05": 0,
+  "mean_pearson_primary": -0.019412870194330755,
+  "mean_coverage_primary": 0.8084722222222223,
+  "trend2_n_signals": 3439,
+  "trend2_acc_both": 0.2468740913056121,
+  "trend2_acc_cum": 0.5170107589415528
+}

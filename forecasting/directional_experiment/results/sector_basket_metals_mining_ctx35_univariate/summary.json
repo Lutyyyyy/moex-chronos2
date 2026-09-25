@@ -1,0 +1,13 @@
+{
+  "stage_id": "sector_basket_metals_mining_ctx35_univariate",
+  "group_mode": "univariate",
+  "n_windows": 400,
+  "mean_da_primary": 0.47801282051282057,
+  "median_da_primary": 0.475,
+  "cells_signif_05": 0,
+  "mean_pearson_primary": 0.03007565753514,
+  "mean_coverage_primary": 0.8099999999999999,
+  "trend2_n_signals": 3798,
+  "trend2_acc_both": 0.2285413375460769,
+  "trend2_acc_cum": 0.5
+}

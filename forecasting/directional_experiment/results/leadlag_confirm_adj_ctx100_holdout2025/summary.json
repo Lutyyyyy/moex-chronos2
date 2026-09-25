@@ -1,0 +1,13 @@
+{
+  "stage_id": "leadlag_confirm_adj_ctx100_holdout2025",
+  "group_mode": "multivariate",
+  "n_windows": 385,
+  "mean_da_primary": 0.4896103896103895,
+  "median_da_primary": 0.4857142857142857,
+  "cells_signif_05": 0,
+  "mean_pearson_primary": -0.05652025231109187,
+  "mean_coverage_primary": 0.8000481000481002,
+  "trend2_n_signals": 5023,
+  "trend2_acc_both": 0.23750746565797332,
+  "trend2_acc_cum": 0.5088592474616763
+}

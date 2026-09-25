@@ -9,7 +9,7 @@ own detailed report.
 |---|---|---|---|
 | **3. Risk** | Does it improve VaR/ES, vol targeting, minimum-variance portfolios or hedging? | **Parity, no advantage.** Not worse than the best classical model for VaR/ES and hedging (pre-registered non-inferiority, p < 1e-5); no "better than" claim survives the multiple-testing correction | [`risk_experiment/`](forecasting/risk_experiment/README.md) |
 | **2. Cross-sectional alpha** | Do its quantile forecasts rank stocks into a profitable long-short book? | **No tradable alpha.** Real rank IC (≈ 0.07), mostly known factors; the Chronos-specific part loses money net of costs | [`alpha_experiment/`](forecasting/alpha_experiment/README.md) |
-| **1. Directional accuracy** | Does it call the sign of each ticker's next return? | **No.** A replicated null across ~10 axes | [`forecasting/`](forecasting/README.md) |
+| **1. Directional accuracy** | Does it call the sign of each ticker's next return? | **No.** A replicated null across ~10 axes | [`directional_experiment/`](forecasting/directional_experiment/README.md) |
 
 ## 1. Directional accuracy: a replicated null
 
