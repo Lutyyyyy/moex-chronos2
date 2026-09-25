@@ -76,9 +76,14 @@ def build(mode: str) -> Path:
             p = p[p["h"] <= fc.H]
             p.to_parquet(out / "parity" / f"{tgt}_zero_shot_ref.parquet")
             parity[tgt] = {"source": str(f.relative_to(ROOT)), "rows": len(p)}
-    subprocess.run([sys.executable, str(HERE / "build_notebook.py"), str(out / "ft_lora.ipynb")], check=True)
+    subprocess.run([sys.executable, str(HERE / "build_notebook.py"), str(out / "ft_lora.ipynb"), mode], check=True)
+    if mode == "holdout":                                               # only the fine-tuned sources a frozen arm needs
+        import holdout_run
+        run_targets = list(holdout_run.F_SOURCES)
+    else:
+        run_targets = list(fc.TARGETS)
     cfg = {"mode": mode, "cutoff": CUTOFF[mode], "folds": {str(k): v for k, v in fc.FOLDS[mode].items()},
-           "targets": fc.TARGETS, "ctx": fc.CTX, "H": fc.H, "lr_grid": list(fc.LR_GRID), "num_steps": fc.NUM_STEPS,
+           "targets": fc.TARGETS, "run_targets": run_targets, "ctx": fc.CTX, "H": fc.H, "lr_grid": list(fc.LR_GRID), "num_steps": fc.NUM_STEPS,
            "val_days": fc.VAL_DAYS, "val_stride": fc.VAL_STRIDE, "parity_anchors": PARITY_ANCHORS, "parity": parity,
            "chronos_forecasting": "2.3.2", "model": "amazon/chronos-2",
            "sha256_16": {str(p.relative_to(out)): sha(p) for p in sorted(out.rglob("*")) if p.is_file()}}

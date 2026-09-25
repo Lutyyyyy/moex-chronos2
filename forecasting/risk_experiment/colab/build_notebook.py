@@ -8,6 +8,7 @@ import nbformat as nbf
 
 MD, CODE = nbf.v4.new_markdown_cell, nbf.v4.new_code_cell
 
+MODE = sys.argv[2] if len(sys.argv) > 2 else "dev"                       # sets the default BUNDLE path
 cells = [
     MD("# Chronos-2 LoRA fine-tuning for the risk study (F1 log-RV, F2 [return, log-RV])\n\n"
        "Upload the **unzipped** bundle folder to Google Drive, set `BUNDLE` below, then **Runtime → Run all** "
@@ -26,7 +27,7 @@ cells = [
          "!pip -q uninstall -y torchao"),
     CODE("from google.colab import drive\n"
          "drive.mount('/content/drive')\n"
-         "BUNDLE = '/content/drive/MyDrive/risk_bundle_dev'   # <- the unzipped bundle folder on Drive\n"
+         f"BUNDLE = '/content/drive/MyDrive/risk_bundle_{MODE}'   # <- the unzipped bundle folder on Drive\n"
          "TRAINER_TMP = '/content/trainer_tmp'                # Trainer scratch on local disk (not Drive)"),
     CODE("import json, sys, time, platform\n"
          "from pathlib import Path\n"
@@ -68,7 +69,8 @@ cells = [
          "    assert r['max_abs_diff'] < 5e-3, f'{tgt}: GPU zero-shot differs from the CPU reference by {r[\"max_abs_diff\"]:.2e}'"),
     CODE("# main loop: all folds, resumable. The first fold also serves as the timing smoke test.\n"
          "t0 = time.time()\n"
-         "recs = fc.run_all(pipe, panels, eligible, cfg['mode'], OUT, trainer_root=TRAINER_TMP)\n"
+         "recs = fc.run_all(pipe, panels, eligible, cfg['mode'], OUT, targets=tuple(cfg.get('run_targets', ['F1', 'F2'])),\n"
+         "                  trainer_root=TRAINER_TMP)\n"
          "print(f'done in {(time.time() - t0) / 60:.1f} min')"),
     CODE("import shutil\n"
          "zp = shutil.make_archive('/content/outputs', 'zip', root_dir=OUT)\n"

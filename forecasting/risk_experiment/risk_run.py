@@ -984,12 +984,12 @@ F_START, F_END = "2022-01-01", "2024-12-31"                             # calend
 FROZEN_C = {"U1": "mixeq_chr_N1ret", "U2": "fac_chr", "U3": "mixeq_chr_N4rv", "U4": "mixeq_chr_Z3_cal"}   # = holdout_run.FROZEN
 
 
-def ft_records(ft_dir: Path = FT_DIR, targets=("F1", "F2")) -> pd.DataFrame:
+def ft_records(ft_dir: Path = FT_DIR, targets=("F1", "F2"), years=F_YEARS) -> pd.DataFrame:
     """One row per (target, year) from the Colab record.json files, with the checks of plan W0.1:
     all dev folds present, the chosen lr is the argmin of the inner-validation loss, the adapter was saved."""
     rows = []
     for t in targets:
-        for y in F_YEARS:
+        for y in years:
             f = Path(ft_dir) / t / str(y) / "record.json"
             if not f.exists():
                 raise FileNotFoundError(f"missing Colab fold {t} {y}: {f}")

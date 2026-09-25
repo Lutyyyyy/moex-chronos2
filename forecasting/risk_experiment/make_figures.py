@@ -20,7 +20,8 @@ LABEL = {"rm": "RiskMetrics", "garch_t": "GARCH-t", "garch": "GARCH", "ewma": "E
          "fac_chr_cal": "Chronos one-factor (cal.)", "fac_loghar_cal": "log-HAR one-factor (cal.)",
          "mixeq_chr_N4rv_cal": "Chronos + log-HAR mix (cal.)", "fac_chr": "Chronos one-factor", "fac_ewma_cal": "EWMA one-factor (cal.)",
          "fhs_loghar": "FHS log-HAR", "mixeq_chr_N4rv": "Chronos (5-day) + log-HAR mix",
-         "mixeq_chr_Z3_cal": "Chronos + log-HAR mix (cal.)", "port_loghar": "log-HAR on portfolio RV"}
+         "mixeq_chr_Z3_cal": "Chronos + log-HAR mix (cal.)", "port_loghar": "log-HAR on portfolio RV",
+         "mixeq_chr_F2ret": "LoRA Chronos + FHS log-HAR mix", "mixeq_chr_F2rv": "LoRA Chronos + log-HAR mix"}
 
 
 def nice(arm: str, chronos: set | None = None) -> str:

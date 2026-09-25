@@ -89,3 +89,20 @@ def test_twin_names():
     assert rr.f_twin_name("mixeq_chr_F1_cal") == "mixeq_chr_Z3_cal"
     assert rr.f_twin_name("mixeq_chr_F2ret") == "mixeq_chr_N1ret"
     assert rr.f_twin_name("chrfhs_F2rv_cal") == "chrfhs_N1rv_cal"
+
+
+def test_holdout_coverage_check(monkeypatch):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "colab"))
+    import holdout_run as hr
+    monkeypatch.setattr(rr, "HOLDOUT", ("2025-01-01", "2025-01-10"))
+    cal = pd.bdate_range("2024-12-20", "2025-01-10")
+    elig = pd.DataFrame(True, index=cal, columns=["AAA", "BBB"])
+    elig.loc["2025-01-06", "BBB"] = False
+    anchors = [a for a in cal if a >= pd.Timestamp("2025-01-01")]
+    ft = _preds(anchors, ["AAA", "BBB"], ["ret", "logrv"], h=(1, 2, 3, 4, 5))
+    ft = ft[~((ft["anchor"] == "2025-01-06") & (ft["ticker"] == "BBB"))]
+    hr.check_f_holdout("F2", ft, elig)                                   # exact coverage passes
+    with pytest.raises(ValueError, match="missing 1"):
+        hr.check_f_holdout("F2", ft.iloc[1:], elig)
+    with pytest.raises(ValueError, match="duplicated 1"):
+        hr.check_f_holdout("F2", pd.concat([ft, ft.iloc[:1]]), elig)

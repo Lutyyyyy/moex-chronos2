@@ -21,8 +21,10 @@ Z = stats.norm.ppf(0.95)
 
 # dev-best arms (pooled primary loss); fine-tuned arms are added once the Colab outputs exist
 # re-selected after the plan-H universe correction (dev-best Chronos-containing arm, dev-best classical arm)
-PAIRS = {"U1": ("mixeq_chr_N1ret", "fhs_loghar"), "U2": ("fac_chr", "port_loghar"),
-         "U3": ("mixeq_chr_N4rv", "ewma"), "U4": ("mixeq_chr_Z3_cal", "ols_beta")}
+# U1 and U3 C replaced by F2 arms under the F rule (plan I). The F2 arms do not gate the dev universe here,
+# so the approved margins (which depend only on B and the reference) are reproduced exactly.
+PAIRS = {"U1": ("mixeq_chr_F2ret", "fhs_loghar"), "U2": ("fac_chr", "port_loghar"),
+         "U3": ("mixeq_chr_F2rv", "ewma"), "U4": ("mixeq_chr_Z3_cal", "ols_beta")}
 
 
 def dev_setup():
@@ -41,13 +43,34 @@ def u1_losses(D, S, mask1):
         if 0.05 in v and rr.gates(k):
             V, E = v[0.05]
             M &= V.lt(0) & E.lt(V)
-    return {k: rl.fz0_panel(y1, *arms[k][0.05], M, 0.05) for k in ("mixeq_chr_N1ret", "fhs_loghar", "rm", "garch_t")}
+    out = {k: rl.fz0_panel(y1, *arms[k][0.05], M, 0.05) for k in ("fhs_loghar", "rm", "garch_t")}
+    Vc, Ec = ra.chronos_vares(rr.load_f_source("F2"), (0.05,), D["ret"].index, D["ret"].columns, variate="ret", h=1)[0.05]
+    V, E = arms["fhs_loghar"][0.05]
+    out["mixeq_chr_F2ret"] = rl.fz0_panel(y1, rl.vincentize([Vc, V], [0.5, 0.5]), rl.vincentize([Ec, E], [0.5, 0.5]), M, 0.05)
+    return out
 
 
-def u23_paths():
+def u23_paths(D, S, mask5):
+    """Cached D·R·D and N5 paths, plus the F2 GMV arm on the same universe and dates (as evaluate_vol)."""
     Pc = pd.read_parquet(rr.OUT / "dev" / "cache" / "portfolio_paths.parquet")
     Pn = pd.read_parquet(rr.OUT / "dev" / "cache" / "n5_paths.parquet")
-    return pd.concat([Pc.loc[Pn.index], Pn], axis=1)
+    ret, cal, cols, steps = D["ret"], D["ret"].index, D["ret"].columns, (1, 2, 3, 4, 5)
+    va = rr.build_vol_arms(D, S, mask5)
+    R5 = ra.forward_simple_return(ret, steps)
+    rf = D["bench"]["rf"].reindex(cal)
+    rf5 = np.expm1(sum(np.log1p(rf.shift(-h)) for h in steps))
+    U = mask5 & R5.notna()
+    for k, v in va.items():
+        if rr.gates(k):
+            U &= v.gt(0)
+    ec = al.ewma_corr(ret)
+    dates = Pc.index
+    corr = {d: pd.DataFrame(C, index=ec["cols"], columns=ec["cols"]) for d, C in ec["C"].items() if d in set(dates)}
+    c3 = PAIRS["U3"][0]
+    arm = rl.geo_mix([ra.chronos_rv(rr.load_f_source("F2"), steps, cal, cols, variate="logrv"), va[rr.MIX_PARTNER_VOL]], [0.5, 0.5])
+    new = ra.portfolio_paths({c3: arm}, corr, R5, rf5, U, dates, rr.VT_TARGET_ANNUAL * np.sqrt(5 / 252))
+    Pf = pd.concat({k: pd.DataFrame(v) for k, v in new.items()}, axis=1)
+    return pd.concat([Pc.loc[Pn.index], Pf.loc[Pn.index], Pn], axis=1)
 
 
 def u4_losses(D, S, mask5):
@@ -110,8 +133,8 @@ def main():
     D, S, mask1, mask5 = dev_setup()
     rows = []
     L1 = u1_losses(D, S, mask1)
-    P = u23_paths()
-    L3 = {k: P[(k, "gmv")] ** 2 for k in ("mixeq_chr_N4rv", "ewma", "garch")}
+    P = u23_paths(D, S, mask5)
+    L3 = {k: P[(k, "gmv")] ** 2 for k in (PAIRS["U3"][0], "ewma", "garch")}
     L4 = u4_losses(D, S, mask5)
     to_vol = lambda L: np.sqrt(L * 252 / 5)                               # noqa: E731  loss (mean r5²) -> annual vol
     for use, L, ref in (("U1", L1, "rm"), ("U3", L3, "ewma"), ("U4", L4, "ewma")):
