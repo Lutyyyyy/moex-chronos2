@@ -19,32 +19,27 @@ Short version: **[docs/summary.md](docs/summary.md)** (two pages). Synthesis of 
 _Risk study, holdout 2025-01 → 2026-09 (opened once): loss difference of the frozen Chronos arm vs the best
 classical model and the standard baselines, with 95% confidence intervals (left of 0 means Chronos is better)._
 
-## What the project demonstrates
-- **Evaluation discipline:**
-  - the pre-registration is committed before the holdout data is used;
-  - the holdout is opened once, and the code refuses a second run;
-  - a trial ledger counts every variant tried (238 in the alpha study, 265 in the risk study);
-  - multiple-testing correction (Benjamini-Hochberg, Holm);
-  - claims keep "beats weak baselines" apart from "beats the best classical model", with non-inferiority
-    tests for "as good as";
-  - the payoff is visible: a calm-day VaR edge with dev t −4.0 fell to t −1.3 on the holdout.
-- **Market-data engineering**, where several traps were not obvious:
-  - The daily "close" in the data feed is the evening-session print, so the daily panel is rebuilt from
-    main-session 10-minute bars.
-  - Dividend adjustment timing, including a dividend that was announced but never paid.
-  - Holiday forward-filling creates fake zero returns.
-  - Futures returns across contract rolls must be masked.
-  - Realized variance from asynchronous 10-minute trades is biased (the Epps effect).
-- **Methods:**
-  - forecast comparison with autocorrelation-robust tests (Diebold-Mariano, Giacomini-White, Newey-West);
-  - proper scoring rules for VaR/ES (FZ0, Acerbi-Szekely);
-  - economic value measured as a performance fee;
-  - causal calibration and forecast mixtures;
-  - LoRA fine-tuning on Colab, with yearly refits trained only on past data.
-- **Honest negative results.** Bugs found mid-project are documented in each study's README:
-  - a spurious market-factor artifact;
-  - a median bias in single-series calibration;
-  - an evaluation-universe gap that silently dropped the 2022 crash months.
+## How the studies were run
+- **Protocol:** all selection on a development period, with success criteria fixed before the test data was
+  used; every variant tried is logged in a trial ledger (238 trials in the alpha study, 265 in the risk
+  study); multiple testing corrected with Benjamini-Hochberg or Holm. The risk study's pre-registration was
+  committed before its holdout was opened, the holdout was evaluated once with code that refuses a second run,
+  and its claims are split into "better than weak baselines", "better than the best classical model" and
+  "not worse" (non-inferiority with margins fixed on dev).
+- **Tests:** Diebold-Mariano and Giacomini-White with Newey-West errors; FZ0 and Acerbi-Szekely for VaR/ES;
+  Kupiec and Christoffersen coverage tests; performance fees for vol targeting; Fama-MacBeth and spanning
+  regressions for alpha.
+- **Models:** Chronos-2 in univariate, cross-learning, multivariate and covariate modes, calibrated, mixed with
+  classical models, and LoRA fine-tuned on Colab with yearly refits trained only on past data. Classical
+  rivals: EWMA/RiskMetrics, GARCH(-t), filtered historical simulation, HAR and log-HAR, rolling OLS beta,
+  momentum / reversal / low-vol factors.
+- **Data issues handled** (own pipeline on MOEX AlgoPack, with tests): the feed's daily close is an
+  evening-session print, so daily prices are rebuilt from main-session 10-minute bars; dividend adjustment
+  timing, including an announced dividend that was never paid; holiday forward-fill removed (it created zero
+  returns); futures returns masked across contract rolls; the Epps bias of realized covariance from
+  asynchronous 10-minute trades.
+- Problems found during the work, and what each would have turned into without the check that caught it, are
+  listed in [FINDINGS](FINDINGS.md#what-the-safeguards-caught).
 
 ## Repository layout
 ```

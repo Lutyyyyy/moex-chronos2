@@ -37,25 +37,26 @@ attention did not help direction, ranking or VaR, and joint return + variance fo
 while hurting volatility forecasts ([FINDINGS, section 4](../FINDINGS.md#4-which-chronos-2-modes-worked)).
 
 ## How it was done
-- **Data engineering** (MOEX AlgoPack, own pipeline with tests):
+- **Data** (own pipeline on MOEX AlgoPack, with tests):
   - the daily "close" in the feed is an evening-session print, so prices are rebuilt from main-session
     10-minute bars;
   - dividend adjustment timing, including an announced dividend that was never paid;
   - holiday forward-fill removed (it creates fake zero returns);
   - futures roll masking;
   - the Epps bias of realized covariance from asynchronous 10-minute trades.
-- **Evaluation discipline:**
+- **Protocol:**
   - selection only on dev, with every variant logged;
-  - pre-registration committed before the holdout; guards in code refuse to open the holdout without it,
-    or a second time;
+  - pre-registration committed before the holdout; the code refuses to open the holdout without it, or a
+    second time;
   - claims separated into "better than weak baselines", "better than the best classical model"
     (Holm-corrected) and "not worse" (non-inferiority with margins fixed on dev).
 - **Statistics:** Diebold-Mariano and Giacomini-White tests with Newey-West errors, FZ0 scoring and the
-  Acerbi-Szekely backtest for VaR/ES, Kupiec and Christoffersen coverage tests, Fleming-Kirby-Ostdiek performance fees,
-  stationary bootstrap, a real-time stress-regime rule.
-- **Modelling:** Chronos-2 cross-learning and multivariate forecasting, past covariates, conformal and rolling
-  calibration, forecast mixtures, one-factor covariance, LoRA fine-tuning on Colab (GPU/CPU parity checked,
-  yearly refits trained only on past data).
+  Acerbi-Szekely backtest for VaR/ES, Kupiec and Christoffersen coverage tests, Fleming-Kirby-Ostdiek
+  performance fees, stationary bootstrap, a real-time stress-regime rule.
+- **Models:** Chronos-2 in univariate, cross-learning, multivariate and covariate modes; conformal and rolling
+  calibration; forecast mixtures; a one-factor covariance model; LoRA fine-tuning on Colab (GPU/CPU parity
+  checked, yearly refits trained only on past data). Classical rivals: EWMA/RiskMetrics, GARCH(-t), filtered
+  historical simulation, HAR and log-HAR, rolling OLS beta.
 
 ## Mistakes found and fixed before the holdout
 - An evaluation universe that silently dropped the 2022 crash months (caught by a dry run of the holdout code).

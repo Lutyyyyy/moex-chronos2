@@ -168,7 +168,7 @@ The head-to-head t-statistics in study 3 are Diebold-Mariano tests on dev arms a
 after the holdout was opened and not corrected for multiplicity
 ([`chronos_modes.csv`](forecasting/risk_experiment/results/dev/chronos_modes.csv)).
 
-## What the evaluation discipline caught
+## What the safeguards caught
 
 Each of these would have become a reported "finding" without the safeguard that caught it:
 
