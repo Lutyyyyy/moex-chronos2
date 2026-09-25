@@ -5,7 +5,7 @@ net alpha on MOEX equities beyond classic strategies? There are two tracks:
 - **Track A (return alpha):** location signals from the forecast distribution.
 - **Track B (risk model):** the forecast width used as a volatility forecast.
 
-This is a different question from the per-ticker directional-accuracy null in [FINDINGS.md](../../FINDINGS.md). Ranking ~60 names only needs relative skill, and a vol forecast needs no return skill at all.
+This is a different question from the per-ticker directional-accuracy null of study 1 ([`../README.md`](../README.md)). Ranking ~60 names only needs relative skill, and a vol forecast needs no return skill at all.
 
 Plan: `tmp/plans/alpha_experiment.md` (kept locally, not in the repo). Code: [`alpha_lib.py`](alpha_lib.py) (pure functions, tested in [`tests/`](tests/)) and [`alpha_run.py`](alpha_run.py) (stages `data → forecast → dev → test → holdout`).
 
@@ -117,7 +117,7 @@ Chronos's return-based σ is **not a better risk model** than EWMA or GARCH(1,1)
 - **Economic value:** no economic use beat its EWMA twin.
 
 **Reading.**
-- **Track A:** the per-ticker directional null in FINDINGS.md does *not* carry over to cross-sectional ranking, where Chronos has real IC. Most of that IC is a repackaging of trend/drift and low-vol that a one-line AR(1)/momentum rule captures more cheaply. The incremental part is statistically detectable (A3) but too small, and too expensive to trade at weekly frequency, to add alpha (A2).
+- **Track A:** the per-ticker directional null of study 1 does *not* carry over to cross-sectional ranking, where Chronos has real IC. Most of that IC is a repackaging of trend/drift and low-vol that a one-line AR(1)/momentum rule captures more cheaply. The incremental part is statistically detectable (A3) but too small, and too expensive to trade at weekly frequency, to add alpha (A2).
 - **Track B:** zero-shot Chronos σ from daily returns is no better than a 1990s EWMA.
 
 Detailed tables are in `forecasting/runs/alpha_test/` (gitignored, reproducible with `alpha_run.py test` after deleting that dir; the code refuses a silent rerun). The trial ledger has all 8 dev trials and 6 test rows.
@@ -145,7 +145,7 @@ A second data audit, prompted by review of the v1 results, found two real bugs. 
 **Consequences**
 - The v1 gate numbers above were computed on the uncorrected data. They stay as recorded and are not edited.
 - A corrected-data re-run of the same frozen pipeline has **not** been run yet. It will re-use 2024, and must be reported as such.
-- The rebuilt `close_adj` also changes the inputs of every earlier experiment in `FINDINGS.md` that used `close_adj`. Their recorded results were not recomputed.
+- The rebuilt `close_adj` also changes the inputs of every study 1 experiment ([`../README.md`](../README.md)) that used `close_adj`. Their recorded results were not recomputed.
 
 ### Corrected-data re-run of the frozen v1 pipeline (2026-09-24): **same verdict**
 

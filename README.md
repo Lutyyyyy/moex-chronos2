@@ -7,11 +7,12 @@ the test data was touched and a holdout period opened only at the end.
 
 | Study | Question | Answer |
 |---|---|---|
-| **1. Directional accuracy** ([FINDINGS.md](FINDINGS.md)) | Does Chronos-2 predict the *sign* of the next return? | **No.** A replicated null across ~10 axes: resolution, grouping, price adjustment, context length, sectors, lead-lag. |
+| **1. Directional accuracy** ([forecasting](forecasting/README.md)) | Does Chronos-2 predict the *sign* of the next return? | **No.** A replicated null across ~10 axes: resolution, grouping, price adjustment, context length, sectors, lead-lag. |
 | **2. Return alpha** ([alpha_experiment](forecasting/alpha_experiment/README.md)) | Do its quantile forecasts rank stocks well enough for a profitable long-short book? | **No tradable alpha.** The rank IC is real (0.07 on 2021–23, 0.09 on 2024), but it is mostly known factors (low-vol, momentum, AR(1)) in disguise. The Chronos-specific part has net Sharpe −0.38 and no spanning alpha. |
 | **3. Risk** ([risk_experiment](forecasting/risk_experiment/README.md)) | Does it help with VaR/ES, vol targeting, minimum-variance portfolios or hedging? | **Parity, no advantage** (pre-registered holdout 2025–26). Not worse than the best classical model for VaR/ES and hedging (both non-inferiority claims pass, p < 1e-5), with the best point estimate in both, but no "better than" claim survives the multiple-testing correction. Dev-period edges (calm-day VaR, LoRA fine-tuning) shrank or vanished out of sample. |
 
-Short version: **[docs/summary.md](docs/summary.md)** (two pages).
+Short version: **[docs/summary.md](docs/summary.md)** (two pages). Synthesis of all three studies:
+**[FINDINGS.md](FINDINGS.md)**.
 
 ![Chronos vs classical risk models, holdout](docs/figures/risk_holdout_forest.png)
 
@@ -49,14 +50,15 @@ classical model and the standard baselines, with 95% confidence intervals (left 
 ```
 data_pipeline/            MOEX AlgoPack extraction: candles, covariates, universe selection, price adjustment; tests
 forecasting/
-  lib.ipynb, run.ipynb, configs/   study 1: config-driven directional-accuracy runs (71 configs, incl. the 2025 UNAC holdout)
+  README.md                        study 1 report (directional accuracy)
+  lib.ipynb, run.ipynb, configs/   study 1: config-driven runs (71 configs, incl. the 2025 UNAC holdout)
   alpha_experiment/                study 2: code, tests, pre-registration, results/
   risk_experiment/                 study 3: code, tests, Colab LoRA bundle builder, results/
 docs/                     2-page summary (summary.md), figures, design notes (lead-lag research), archive
 ```
 
 An earlier fine-tuning attempt through AutoGluon was paused and is not part of this repo (see
-FINDINGS.md, "Fine-tuning"). Study 3's LoRA fine-tuning replaces it.
+the study 1 report, [forecasting/README.md](forecasting/README.md)). Study 3's LoRA fine-tuning replaces it.
 
 ## Reproducing
 Install with `python3 -m venv .venv && .venv/bin/pip install -r requirements.txt` (Python 3.12).

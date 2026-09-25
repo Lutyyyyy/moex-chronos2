@@ -34,7 +34,7 @@
 # dependency -- what this test family was actually built to detect. No other ticker in the
 # family came back significant either. Required extending data_pipeline's pull (config.md's
 # period.end widened from 2024-12-31 to today) to fetch 2025-2026 data. Full writeup in
-# ../../FINDINGS.md's lead-lag confirmation section.
+# ../README.md's lead-lag confirmation section (study 1 report).
 stage_id: leadlag_confirm_adj_ctx100_holdout2025
 notes: >
   Fresh out-of-sample holdout for the ctx=100 lead-lag confirmation anomaly (UNAC).
