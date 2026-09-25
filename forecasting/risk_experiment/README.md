@@ -37,7 +37,8 @@ What the dev period shows:
   for VaR: the U1 Chronos mix beats FHS log-HAR on calm days (dev t −4.0) and loses on stress days (t +1.0).
 - **What helps.** Mixing Chronos with a classical model beats Chronos alone in every use. Multivariate
   LoRA fine-tuning (F2: returns and log-RV together) improves on zero-shot Chronos consistently in U1, U2 and
-  U3 (21 of 22 F2 arms in those uses better than their zero-shot twin on 2022–24). Fine-tuning on log-RV alone
+  U3 (21 of 22 F2 arms in those uses better than their zero-shot twin on 2022–24;
+  [`results/dev/f2_vs_twin_count.csv`](results/dev/f2_vs_twin_count.csv)). Fine-tuning on log-RV alone
   (F1), past covariates (N6), and a Chronos model of the correlation side (N5) add nothing measurable.
 - **Cost.** Chronos arms need a transformer forward pass per forecast date and a GPU for fine-tuning; the
   classical arms are closed-form or small regressions.
@@ -192,7 +193,8 @@ pass by a wide margin; no "better than" claim survives the Holm correction, incl
 - **Start date:** the pre-registration says the holdout starts 2025-01-02; the first trading day in the
   panel is 2025-01-03. The day count (434) is correct.
 - **Dates per use:** U1 uses 433 forecast dates (1-day horizon), U2/U3 429 (5-day horizon), U4 395 (windows
-  containing an MX futures roll are dropped for all arms).
+  containing an MX futures roll are dropped for all arms). The calm-day counts per use (381, 377, 343) are the
+  pre-registered 382 calm days minus each use's own date filter; they are not a separate discrepancy.
 - **Extra source (plan J):** zero-shot N1 holdout forecasts were generated after the pre-registration for the
   F2-vs-zero-shot report only; the twin and coverage reports are separate, report-only code (additions only).
 - **Fine-tuned holdout folds:** 2025 (trained ≤ 2024, lr 1e-4) and 2026 (trained ≤ 2025, lr 3e-5), both
