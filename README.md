@@ -12,7 +12,7 @@ the test data was touched and a holdout period opened only at the end.
 | **3. Risk** ([risk_experiment](forecasting/risk_experiment/README.md)) | Does it help with VaR/ES, vol targeting, minimum-variance portfolios or hedging? | **Parity, no advantage** (pre-registered holdout 2025–26). Not worse than the best classical model for VaR/ES and hedging (both non-inferiority claims pass, p < 1e-5), with the best point estimate in both, but no "better than" claim survives the multiple-testing correction. Dev-period edges (calm-day VaR, LoRA fine-tuning) shrank or vanished out of sample. |
 
 Short version: **[docs/summary.md](docs/summary.md)** (two pages). Synthesis of all three studies:
-**[FINDINGS.md](FINDINGS.md)**.
+**[FINDINGS.md](FINDINGS.md)**. Paper-style report with figures: **[docs/report/report.pdf](docs/report/report.pdf)** (8 pages).
 
 ![Chronos vs classical risk models, holdout](docs/figures/risk_holdout_forest.png)
 
@@ -48,7 +48,7 @@ forecasting/
   directional_experiment/          study 1: report, runner + cell library, 71 configs, per-run results/
   alpha_experiment/                study 2: code, tests, pre-registration, results/
   risk_experiment/                 study 3: code, tests, Colab LoRA bundle builder, results/
-docs/                     2-page summary (summary.md), figures
+docs/                     2-page summary (summary.md), PDF report (report/, LaTeX source + figure script), figures
 ```
 
 An earlier fine-tuning attempt through AutoGluon was paused and is not part of this repo (see
