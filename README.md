@@ -9,22 +9,22 @@ the test data was touched and a holdout period opened only at the end.
 |---|---|---|
 | **1. Directional accuracy** ([FINDINGS.md](FINDINGS.md)) | Does Chronos-2 predict the *sign* of the next return? | **No.** A replicated null across ~10 axes: resolution, grouping, price adjustment, context length, sectors, lead-lag. |
 | **2. Return alpha** ([alpha_experiment](forecasting/alpha_experiment/README.md)) | Do its quantile forecasts rank stocks well enough for a profitable long-short book? | **No tradable alpha.** The rank IC is real (0.07 on 2021–23, 0.09 on 2024), but it is mostly known factors (low-vol, momentum, AR(1)) in disguise. The Chronos-specific part has net Sharpe −0.38 and no spanning alpha. |
-| **3. Risk** ([risk_experiment](forecasting/risk_experiment/README.md)) | Does it help with VaR/ES, vol targeting, minimum-variance portfolios or hedging? | **Holdout pending.** On 2021–24: on par with the best classical model in every use, never significantly better overall. Better than it for 1-day VaR on calm days, worse in the 2022 crash. LoRA fine-tuning on log-RV adds nothing measurable (the multivariate fine-tune is still running). |
+| **3. Risk** ([risk_experiment](forecasting/risk_experiment/README.md)) | Does it help with VaR/ES, vol targeting, minimum-variance portfolios or hedging? | **Parity, no advantage** (pre-registered holdout 2025–26). Not worse than the best classical model for VaR/ES and hedging (both non-inferiority claims pass, p < 1e-5), with the best point estimate in both, but no "better than" claim survives the multiple-testing correction. Dev-period edges (calm-day VaR, LoRA fine-tuning) shrank or vanished out of sample. |
 
-<!-- RESULT: replace the Study 3 answer with the holdout verdict once the holdout is opened -->
+![Chronos vs classical risk models, holdout](docs/figures/risk_holdout_forest.png)
 
-![Chronos vs classical risk models, dev period](docs/figures/risk_dev_forest.png)
-
-_Loss difference with a 95% confidence interval, per use (left of 0 means the first model is better).
-Dev period 2021–24; the holdout figure is added once the holdout is opened._
+_Risk study, holdout 2025-01 → 2026-09 (opened once): loss difference of the frozen Chronos arm vs the best
+classical model and the standard baselines, with 95% confidence intervals (left of 0 means Chronos is better)._
 
 ## What the project demonstrates
 - **Evaluation discipline:**
   - the pre-registration is committed before the holdout data is used;
   - the holdout is opened once, and the code refuses a second run;
-  - a trial ledger counts every variant tried (238 in the alpha study, 204+ in the risk study);
+  - a trial ledger counts every variant tried (238 in the alpha study, 265 in the risk study);
   - multiple-testing correction (Benjamini-Hochberg, Holm);
-  - claims keep "beats weak baselines" apart from "beats the best classical model".
+  - claims keep "beats weak baselines" apart from "beats the best classical model", with non-inferiority
+    tests for "as good as";
+  - the payoff is visible: a calm-day VaR edge with dev t −4.0 fell to t −1.3 on the holdout.
 - **Market-data engineering**, where several traps were not obvious:
   - The daily "close" in the data feed is the evening-session print, so the daily panel is rebuilt from
     main-session 10-minute bars.
