@@ -1,6 +1,6 @@
 # Ticker universe: what is accessible
 
-Live snapshot of the current listings: [`universe_snapshot.md`](universe_snapshot.md) (2026-09-15). Regenerate with `universe_report(cfg)`, cell 9 of the notebook.
+A live snapshot of the current listings can be generated with `universe_report(cfg)`, cell 9 of the notebook.
 
 ## Groups (paid ALGOPACK key, verified 2026-09-15)
 | Config group | ISS board | Listed now | Datasets | Ticker to put in config |

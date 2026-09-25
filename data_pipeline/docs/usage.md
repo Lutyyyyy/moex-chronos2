@@ -138,5 +138,4 @@ order of 500 requests, ~1.5 minutes at the default `pause_sec`.
 - `pytest`: offline suite with a fake ISS (config, client, transforms, futures roll, end-to-end run and resume, notebook build).
 - `pytest -m live`: real API with the key from `.env`. Covers SBER, IMOEX, CNYRUB_TOM and Si over 2024-03-14..19, all datasets. Takes about 40 s.
 - After editing `src/algopack_pipeline.py`, run `python tools/build_notebook.py`. A test fails if the notebook is stale.
-- `python tools/probe_algopack.py` is a raw access check (auth, datasets, freshness).
 - **The Russian Trusted Sub CA in `certs/` expires 2027-03-06.** Refresh it from `https://gu-st.ru/content/Other/doc/` and rebuild the notebook.
