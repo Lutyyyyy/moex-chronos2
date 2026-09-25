@@ -34,7 +34,7 @@
 # dependency -- what this test family was actually built to detect. No other ticker in the
 # family came back significant either. Required extending data_pipeline's pull (config.md's
 # period.end widened from 2024-12-31 to today) to fetch 2025-2026 data. Full writeup in
-# ../../../FINDINGS.md's lead-lag confirmation section; see README.md in this folder.
+# ../../FINDINGS.md's lead-lag confirmation section.
 stage_id: leadlag_confirm_adj_ctx100_holdout2025
 notes: >
   Fresh out-of-sample holdout for the ctx=100 lead-lag confirmation anomaly (UNAC).
@@ -43,7 +43,8 @@ notes: >
   far. Same three-part gate as every other experiment in this project (BH-significant
   AND beats baseline AND ΔDA>0, applied per ticker here since there's no paired
   multivariate/univariate arm in this config). RESULT: null -- UNAC's effect did not
-  replicate (see header comment above), confirming it was a false positive.
+  replicate at BH level; the residual edge traces to a one-ticker momentum regime, not a
+  cross-asset dependency (see header comment above).
 
 data_source: algopack
 algopack_processed_path: data_pipeline/data/processed/candles_1d/shares.parquet

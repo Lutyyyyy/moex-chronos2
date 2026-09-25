@@ -49,8 +49,7 @@ classical model and the standard baselines, with 95% confidence intervals (left 
 ```
 data_pipeline/            MOEX AlgoPack extraction: candles, covariates, universe selection, price adjustment; tests
 forecasting/
-  lib.ipynb, run.ipynb, configs/   study 1: config-driven directional-accuracy runs (70 configs)
-  holdout_unac_experiment/         study 1: 2025 holdout confirmation
+  lib.ipynb, run.ipynb, configs/   study 1: config-driven directional-accuracy runs (71 configs, incl. the 2025 UNAC holdout)
   alpha_experiment/                study 2: code, tests, pre-registration, results/
   risk_experiment/                 study 3: code, tests, Colab LoRA bundle builder, results/
 docs/                     2-page summary (summary.md), figures, design notes (lead-lag research), archive
